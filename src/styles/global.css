@@ -1,23 +1,23 @@
 :root {
-  color-scheme: light;
-  --bg: #ffffff;
-  --bg-soft: #f4f7fc;
-  --bg-elevated: #ffffff;
-  --bg-hover: #eef3fb;
-  --border: #e2e8f4;
-  --border-strong: #c5d0e6;
-  --text: #0f172a;
-  --muted: #5b6b86;
-  --accent: #1e3a8a;
-  --accent-bright: #2563eb;
-  --accent-2: #7c3aed;
-  --success: #059669;
-  --warn: #d97706;
-  --danger: #dc2626;
+  color-scheme: dark;
+  --bg: #070a12;
+  --bg-soft: #0e1422;
+  --bg-elevated: #121a2b;
+  --bg-hover: #1a2438;
+  --border: #243049;
+  --border-strong: #3a4f73;
+  --text: #eef3ff;
+  --muted: #8b98b8;
+  --accent: #93c5fd;
+  --accent-bright: #60a5fa;
+  --accent-2: #a78bfa;
+  --success: #34d399;
+  --warn: #fbbf24;
+  --danger: #f87171;
   --radius: 20px;
   --radius-sm: 14px;
-  --shadow: 0 12px 40px rgba(15, 23, 42, 0.06);
-  --shadow-lg: 0 24px 60px rgba(15, 23, 42, 0.08);
+  --shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 28px 70px rgba(0, 0, 0, 0.5);
   --font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     Helvetica, Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -39,7 +39,10 @@ body,
 body {
   margin: 0;
   font-family: var(--font);
-  background: var(--bg);
+  background:
+    radial-gradient(1000px 520px at 12% -10%, rgba(56, 189, 248, 0.1), transparent 55%),
+    radial-gradient(800px 480px at 100% 0%, rgba(167, 139, 250, 0.1), transparent 50%),
+    var(--bg);
   color: var(--text);
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
@@ -111,7 +114,11 @@ code {
   font-weight: 800;
   letter-spacing: -0.04em;
   line-height: 1.08;
-  color: var(--accent);
+  color: var(--text);
+  background: linear-gradient(135deg, #e0f2fe 0%, #c4b5fd 55%, #93c5fd 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 .landing-lede {
@@ -165,8 +172,8 @@ code {
 
 .drop-panel.dragover {
   border-color: var(--accent-bright);
-  background: #eef4ff;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  background: rgba(96, 165, 250, 0.08);
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.15);
 }
 
 .drop-panel h2 {
@@ -185,19 +192,19 @@ code {
   padding: 0.85rem 1.4rem;
   border: none;
   border-radius: 999px;
-  background: var(--accent);
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
   color: #fff;
   font-weight: 650;
   font-size: 0.98rem;
   cursor: pointer;
-  box-shadow: 0 8px 24px rgba(30, 58, 138, 0.25);
+  box-shadow: 0 8px 28px rgba(59, 130, 246, 0.35);
   transition:
     transform 0.15s var(--ease),
-    background 0.15s var(--ease);
+    filter 0.15s var(--ease);
 }
 
 .dropzone-btn:hover:not(:disabled) {
-  background: var(--accent-bright);
+  filter: brightness(1.08);
   transform: translateY(-1px);
 }
 
@@ -231,7 +238,7 @@ code {
   margin: 0 0 0.25rem;
   font-size: clamp(1.45rem, 3vw, 1.85rem);
   letter-spacing: -0.03em;
-  color: var(--accent);
+  color: var(--text);
 }
 
 .workspace-top .sub {
@@ -381,8 +388,8 @@ code {
 
 .preset-card.selected {
   border-color: var(--accent-bright);
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
-  background: #f0f5ff;
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.25);
+  background: rgba(96, 165, 250, 0.08);
 }
 
 .preset-card-top {
@@ -669,14 +676,14 @@ button.sm {
 }
 
 button.primary {
-  background: var(--accent);
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
   border: none;
   color: #fff;
-  box-shadow: 0 8px 22px rgba(30, 58, 138, 0.22);
+  box-shadow: 0 8px 24px rgba(59, 130, 246, 0.3);
 }
 
 button.primary:hover:not(:disabled) {
-  background: var(--accent-bright);
+  filter: brightness(1.08);
   transform: translateY(-1px);
 }
 
@@ -748,7 +755,7 @@ input[type="range"]:focus-visible,
 .progress-track {
   height: 8px;
   border-radius: 999px;
-  background: #e2e8f0;
+  background: #1e293b;
   overflow: hidden;
 }
 
@@ -884,6 +891,6 @@ input[type="range"]:focus-visible,
 }
 
 .site-footer .sep {
-  color: #cbd5e1;
+  color: #334155;
   user-select: none;
 }
