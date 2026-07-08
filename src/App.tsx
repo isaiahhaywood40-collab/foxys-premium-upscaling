@@ -112,6 +112,10 @@ export default function App() {
 
     if (isImage) {
       setPreview(URL.createObjectURL(f));
+      // Warm ESRGAN while user looks at the preview (hides model-load delay)
+      void import("./lib/enhance/esrgan-engine")
+        .then((m) => m.preloadEsrgan())
+        .catch(() => undefined);
     } else {
       setPreview(null);
     }

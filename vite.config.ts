@@ -14,7 +14,7 @@ export default defineConfig({
       "@websr/websr",
       "upscaler",
       "@tensorflow/tfjs",
-      "@upscalerjs/esrgan-thick",
+      "@upscalerjs/esrgan-slim",
     ],
   },
   build: {

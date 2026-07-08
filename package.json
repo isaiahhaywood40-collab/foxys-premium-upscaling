@@ -33,7 +33,7 @@
   },
   "dependencies": {
     "@tensorflow/tfjs": "^4.11.0",
-    "@upscalerjs/esrgan-thick": "^1.0.0",
+    "@upscalerjs/esrgan-slim": "^1.0.0",
     "@websr/websr": "^0.0.16",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

@@ -1,65 +1,94 @@
 /**
- * Real-ESRGAN class engine via UpscalerJS + @upscalerjs/esrgan-thick.
- * Much stronger detail recovery than Anime4K real-time CNNs (which look mild
- * on already-sharp AI art).
+ * Fast ESRGAN via UpscalerJS + esrgan-slim 2×.
+ * Thick models are too slow in-browser; slim (~1MB) is the speed/quality balance.
  *
- * Model weights load from jsDelivr CDN on first run (~28MB for 2× thick).
+ * Weights served from same origin: /models/esrgan-slim/x2/ (no 28MB CDN wait).
  */
 
 import * as tf from "@tensorflow/tfjs";
 import Upscaler from "upscaler";
-import esrgan2x from "@upscalerjs/esrgan-thick/2x";
-import esrgan4x from "@upscalerjs/esrgan-thick/4x";
+import esrgan2x from "@upscalerjs/esrgan-slim/2x";
 import type { ProgressCb } from "./webgl";
 
-const CDN = "https://cdn.jsdelivr.net/npm/@upscalerjs/esrgan-thick@1.0.0";
-
-type Scale = 2 | 4;
+type Scale = 2;
 
 let ready = false;
-const upscalers = new Map<Scale, InstanceType<typeof Upscaler>>();
+let upscaler: InstanceType<typeof Upscaler> | null = null;
+let preloadPromise: Promise<void> | null = null;
+
+function modelPath(): string {
+  const base = import.meta.env.BASE_URL || "/";
+  return `${base}models/esrgan-slim/x2/model.json`;
+}
 
 async function ensureTf(): Promise<void> {
   if (ready) return;
   await tf.ready();
-  // WebGL is the stable TF.js GPU path in browsers
   try {
     await tf.setBackend("webgl");
     await tf.ready();
   } catch {
-    /* keep default */
+    /* default backend */
   }
-  // More memory for large patches when available
   try {
-    tf.env().set("WEBGL_DELETE_TEXTURE_THRESHOLD", 0);
+    // Prefer speed over perfect float precision
     tf.env().set("WEBGL_FORCE_F16_TEXTURES", true);
+    tf.env().set("WEBGL_PACK", true);
   } catch {
     /* ignore */
   }
   ready = true;
 }
 
-function modelFor(scale: Scale) {
-  const base = scale === 4 ? esrgan4x : esrgan2x;
-  // Ensure browser can fetch weights (package path alone fails in Vite/Pages)
-  const def =
-    typeof base === "function"
-      ? (base as () => { path?: string; scale?: number })()
-      : base;
+function modelDef() {
+  const base =
+    typeof esrgan2x === "function"
+      ? (esrgan2x as () => Record<string, unknown>)()
+      : (esrgan2x as Record<string, unknown>);
   return {
-    ...def,
-    path: `${CDN}/models/x${scale}/model.json`,
+    ...base,
+    path: modelPath(),
   };
 }
 
-async function getUpscaler(scale: Scale): Promise<InstanceType<typeof Upscaler>> {
+async function getUpscaler(): Promise<InstanceType<typeof Upscaler>> {
   await ensureTf();
-  let u = upscalers.get(scale);
-  if (!u) {
-    u = new Upscaler({ model: modelFor(scale) as never });
-    upscalers.set(scale, u);
+  if (!upscaler) {
+    upscaler = new Upscaler({ model: modelDef() as never });
   }
-  return u;
+  return upscaler;
+}
+
+/** Call when user picks a file so model loads before they hit Upscale. */
+export function preloadEsrgan(): Promise<void> {
+  if (!preloadPromise) {
+    preloadPromise = (async () => {
+      const u = await getUpscaler();
+      // Tiny warmup so first real image is faster
+      const c = document.createElement("canvas");
+      c.width = 32;
+      c.height = 32;
+      const ctx = c.getContext("2d");
+      if (ctx) {
+        ctx.fillStyle = "#888";
+        ctx.fillRect(0, 0, 32, 32);
+      }
+      try {
+        const t = (await u.upscale(c, {
+          output: "tensor",
+          patchSize: 32,
+          padding: 2,
+        })) as tf.Tensor;
+        t.dispose();
+      } catch {
+        /* warmup optional */
+      }
+    })().catch((e) => {
+      preloadPromise = null;
+      throw e;
+    });
+  }
+  return preloadPromise;
 }
 
 export async function isEsrganAvailable(): Promise<boolean> {
@@ -80,38 +109,13 @@ export interface EsrganResult {
   bilinearCompare: HTMLCanvasElement;
 }
 
-function tensorToCanvas(tensor: tf.Tensor3D): HTMLCanvasElement {
+async function tensorToCanvas(tensor: tf.Tensor3D): Promise<HTMLCanvasElement> {
   const [h, w] = tensor.shape;
   const canvas = document.createElement("canvas");
   canvas.width = w;
   canvas.height = h;
-  // tf.browser.toPixels expects 0-1 float or int32
-  // upscaler returns float 0-1
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("2D context missing");
-
-  // toPixels is async and writes to canvas
-  // We'll use data sync for reliability
-  const data = tensor.dataSync();
-  const imgData = ctx.createImageData(w, h);
-  const out = imgData.data;
-  const rank = tensor.shape.length;
-  // Tensor3D [h,w,c]
-  if (rank !== 3) throw new Error("Expected Tensor3D");
-  const channels = tensor.shape[2] ?? 3;
-
-  for (let i = 0, p = 0; i < w * h; i++) {
-    const r = data[i * channels] ?? 0;
-    const g = data[i * channels + 1] ?? r;
-    const b = data[i * channels + 2] ?? r;
-    // values may be 0-1 or 0-255
-    const scale = r > 1.5 || g > 1.5 || b > 1.5 ? 1 : 255;
-    out[p++] = Math.max(0, Math.min(255, Math.round(r * scale)));
-    out[p++] = Math.max(0, Math.min(255, Math.round(g * scale)));
-    out[p++] = Math.max(0, Math.min(255, Math.round(b * scale)));
-    out[p++] = 255;
-  }
-  ctx.putImageData(imgData, 0, 0);
+  // Fast path: TF.js GPU→canvas
+  await tf.browser.toPixels(tensor, canvas);
   return canvas;
 }
 
@@ -132,8 +136,7 @@ function makeBilinear2x(
 }
 
 /**
- * ESRGAN thick super-resolution — strong detail (Real-ESRGAN class).
- * scale 4 for smaller sources, 2 for large.
+ * Fast 2× ESRGAN-slim. Caps long edge so runtime stays snappy.
  */
 export async function enhanceWithEsrgan(
   source: HTMLImageElement | HTMLCanvasElement | ImageBitmap,
@@ -141,13 +144,13 @@ export async function enhanceWithEsrgan(
   srcH: number,
   onProgress?: ProgressCb,
 ): Promise<EsrganResult> {
-  onProgress?.({ phase: "Loading ESRGAN AI model…", progress: 5 });
+  onProgress?.({ phase: "Starting fast AI upscale…", progress: 5 });
 
-  // Downscale huge inputs so 2×/4× fits in GPU memory
+  // Aggressive cap = fewer patches = much faster (still looks sharp at 2×)
   let input: HTMLCanvasElement | HTMLImageElement | ImageBitmap = source;
   let inW = srcW;
   let inH = srcH;
-  const maxIn = 1024; // thick model is heavy
+  const maxIn = 640;
   if (srcW > maxIn || srcH > maxIn) {
     const r = Math.min(maxIn / srcW, maxIn / srcH);
     inW = Math.max(2, Math.round(srcW * r));
@@ -161,53 +164,47 @@ export async function enhanceWithEsrgan(
     input = tmp;
   }
 
-  const scale: Scale = Math.max(inW, inH) < 720 ? 4 : 2;
+  const scale: Scale = 2;
   const bilinearCompare = makeBilinear2x(
     input as CanvasImageSource,
     inW,
     inH,
   );
-  // If 4× AI, also show bilinear at 4× for fair compare
-  let compareCanvas = bilinearCompare;
-  if (scale === 4) {
-    compareCanvas = makeBilinear2x(bilinearCompare, inW * 2, inH * 2);
-  }
+
+  onProgress?.({ phase: "Loading slim AI model…", progress: 12 });
+  const u = await getUpscaler();
 
   onProgress?.({
-    phase: `Running ESRGAN-thick ${scale}× (strong AI)…`,
-    progress: 15,
+    phase: `ESRGAN-slim 2× (${inW}×${inH} → ${inW * 2}×${inH * 2})…`,
+    progress: 20,
   });
 
-  const upscaler = await getUpscaler(scale);
-
-  // Warm model once
-  onProgress?.({ phase: "Warming up neural net…", progress: 22 });
-
-  const tensor = (await upscaler.upscale(input, {
+  // Larger patches = fewer passes = faster (slim model handles 128 well)
+  const tensor = (await u.upscale(input, {
     output: "tensor",
-    patchSize: scale === 4 ? 48 : 64,
-    padding: 6,
-    awaitNextFrame: true,
+    patchSize: 128,
+    padding: 4,
+    awaitNextFrame: false,
     progress: (amount: number) => {
-      const pct = 25 + Math.round(Math.min(0.95, amount) * 65);
+      const pct = 20 + Math.round(Math.min(0.97, amount) * 70);
       onProgress?.({
-        phase: `ESRGAN patches ${Math.round(amount * 100)}%`,
+        phase: `Upscaling ${Math.round(amount * 100)}%`,
         progress: pct,
       });
     },
   })) as tf.Tensor3D;
 
   try {
-    onProgress?.({ phase: "Writing pixels", progress: 94 });
-    const canvas = tensorToCanvas(tensor);
+    onProgress?.({ phase: "Writing image…", progress: 95 });
+    const canvas = await tensorToCanvas(tensor);
     onProgress?.({ phase: "Done", progress: 100 });
     return {
       canvas,
       width: canvas.width,
       height: canvas.height,
       scale,
-      network: `esrgan-thick-${scale}x`,
-      bilinearCompare: compareCanvas,
+      network: "esrgan-slim-2x",
+      bilinearCompare,
     };
   } finally {
     tensor.dispose();

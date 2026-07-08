@@ -19,13 +19,13 @@ File
   → compare + download
 ```
 
-**Primary engine:** [UpscalerJS](https://upscalerjs.com) + **`@upscalerjs/esrgan-thick`** (2× or 4×) — Real-ESRGAN-class detail, much stronger than mild Anime4K realtime nets on AI art.
+**Primary engine:** [UpscalerJS](https://upscalerjs.com) + **`@upscalerjs/esrgan-slim` 2×** — real ESRGAN detail, tuned for **speed** (model ~1MB, local under `public/models/`).
 
-**Secondary:** [`@websr/websr`](https://github.com/sb2702/websr) Anime4K CNN (same family as free.upscaler.video).
+**Secondary:** [`@websr/websr`](https://github.com/sb2702/websr) Anime4K CNN.
 
 **Fallback:** multi-pass WebGL.
 
-First ESRGAN run downloads ~28MB model weights from jsDelivr (then cached by the browser).
+Speed notes: long edge capped at 640px before 2×; model preloads when you pick a file; first upscale after preload is much faster.
 
 - **Images** → PNG or JPEG + before/after scrubber  
 - **Video** → WebM via MediaRecorder (AI path when WebGPU available)  
