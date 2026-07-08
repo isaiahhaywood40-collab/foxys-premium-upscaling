@@ -17,8 +17,9 @@ jobs:
           node-version: "20"
           cache: npm
 
+      # Use npm install until package-lock.json is committed
       - name: Install
-        run: npm ci
+        run: npm install
 
       - name: Typecheck
         run: npm run typecheck
