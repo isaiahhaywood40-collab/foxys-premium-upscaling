@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   canEnhanceVideo,
   canRunLocalUpscale,
@@ -30,6 +30,15 @@ function FoxMark() {
   );
 }
 
+function revokeQuiet(url: string | null | undefined) {
+  if (!url || !url.startsWith("blob:")) return;
+  try {
+    URL.revokeObjectURL(url);
+  } catch {
+    /* ignore */
+  }
+}
+
 export default function App() {
   const [caps, setCaps] = useState<BrowserCapabilities | null>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -39,6 +48,10 @@ export default function App() {
   const [job, setJob] = useState<UpscaleJob | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Keep latest blob URLs in refs so we only revoke on replace/unmount — not Strict Mode double-mount
+  const previewRef = useRef<string | null>(null);
+  const afterRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,49 +63,56 @@ export default function App() {
     };
   }, []);
 
+  // Single unmount cleanup for blob URLs
   useEffect(() => {
     return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      revokeQuiet(previewRef.current);
+      revokeQuiet(afterRef.current);
     };
-  }, [previewUrl]);
-
-  useEffect(() => {
-    return () => {
-      if (afterUrl) URL.revokeObjectURL(afterUrl);
-    };
-  }, [afterUrl]);
+  }, []);
 
   const ready = useMemo(
     () => (caps ? canRunLocalUpscale(caps) : false),
     [caps],
   );
 
+  const setPreview = (url: string | null) => {
+    if (previewRef.current && previewRef.current !== url) {
+      revokeQuiet(previewRef.current);
+    }
+    previewRef.current = url;
+    setPreviewUrl(url);
+  };
+
+  const setAfter = (url: string | null) => {
+    if (afterRef.current && afterRef.current !== url) {
+      revokeQuiet(afterRef.current);
+    }
+    afterRef.current = url;
+    setAfterUrl(url);
+  };
+
   const onFile = (f: File) => {
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    if (afterUrl) URL.revokeObjectURL(afterUrl);
     setResult(null);
     setError(null);
+    setAfter(null);
 
     const isImage =
       f.type.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(f.name);
-    const url = isImage ? URL.createObjectURL(f) : null;
-    // Videos: object URL for potential future thumb; compare uses frames later
-    const mediaUrl = url ?? URL.createObjectURL(f);
 
-    setPreviewUrl(isImage ? url : null);
-    // keep video object URL only if we need it - for video we revoke mediaUrl if not image
-    if (!isImage) URL.revokeObjectURL(mediaUrl);
+    if (isImage) {
+      setPreview(URL.createObjectURL(f));
+    } else {
+      setPreview(null);
+    }
 
-    setAfterUrl(null);
     setFile(f);
     setJob(createJobFromFile(f));
   };
 
   const clear = () => {
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    if (afterUrl) URL.revokeObjectURL(afterUrl);
-    setPreviewUrl(null);
-    setAfterUrl(null);
+    setPreview(null);
+    setAfter(null);
     setResult(null);
     setFile(null);
     setJob(null);
@@ -111,10 +131,7 @@ export default function App() {
 
     setBusy(true);
     setError(null);
-    if (afterUrl) {
-      URL.revokeObjectURL(afterUrl);
-      setAfterUrl(null);
-    }
+    setAfter(null);
     setResult(null);
 
     setJob({
@@ -126,6 +143,11 @@ export default function App() {
     });
 
     try {
+      // Ensure original preview still exists for images (recreate if needed)
+      if (job.isImage && !previewRef.current) {
+        setPreview(URL.createObjectURL(file));
+      }
+
       const enhanced = await enhanceMedia(file, (p) => {
         setJob((prev) =>
           prev
@@ -140,8 +162,15 @@ export default function App() {
         );
       });
 
-      setAfterUrl(enhanced.objectUrl);
+      // Do not revoke enhanced.objectUrl here — owned by afterRef
+      setAfter(enhanced.objectUrl);
       setResult(enhanced);
+
+      // Recreate original preview if it was lost so compare works
+      if (job.isImage && !previewRef.current) {
+        setPreview(URL.createObjectURL(file));
+      }
+
       setJob((prev) =>
         prev
           ? {
@@ -235,21 +264,21 @@ export default function App() {
                 </button>
               </div>
 
-              {(previewUrl || afterUrl) && (
+              {(previewUrl || afterUrl || job!.isImage) && (
                 <div className="simple-compare">
                   <CompareSlider
                     beforeUrl={previewUrl}
                     afterUrl={afterUrl}
                     emptyHint={
                       job!.isVideo
-                        ? "Video: press Enhance, then download the result. Frame scrubber works best for images."
-                        : "Press Enhance, then drag to compare original vs enhanced."
+                        ? "Video: press Enhance, then download. Frame compare works best for images."
+                        : "Press Enhance, then drag — left original, right enhanced."
                     }
                   />
                 </div>
               )}
 
-              {job!.isVideo && !previewUrl && (
+              {job!.isVideo && !previewUrl && !afterUrl && (
                 <p className="simple-done-note">
                   Video selected. Enhancement runs fully on your device (2× +
                   clarity). Output downloads as WebM.

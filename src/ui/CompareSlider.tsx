@@ -1,7 +1,13 @@
-import { useCallback, useRef, useState, type PointerEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent,
+  type KeyboardEvent,
+} from "react";
 
 interface CompareSliderProps {
-  /** Object URL or empty placeholder mode */
   beforeUrl?: string | null;
   afterUrl?: string | null;
   beforeLabel?: string;
@@ -10,56 +16,102 @@ interface CompareSliderProps {
 }
 
 /**
- * Polished before/after scrubber.
- * Works with image URLs; video frames plug in the same way later.
+ * Before / after scrubber.
+ * Full enhanced image underneath; original on top, width = pos% (left = original).
+ * Both images share the same box size so pixels stay aligned while dragging.
  */
 export function CompareSlider({
   beforeUrl,
   afterUrl,
   beforeLabel = "Original",
   afterLabel = "Enhanced",
-  emptyHint = "Load a file and run a preview to compare quality here.",
+  emptyHint = "Load a file and run enhance to compare quality here.",
 }: CompareSliderProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState(50);
+  const [trackW, setTrackW] = useState(0);
   const dragging = useRef(false);
+
+  useEffect(() => {
+    setPos(50);
+  }, [beforeUrl, afterUrl]);
+
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+
+    const measure = () => setTrackW(el.clientWidth);
+    measure();
+
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [beforeUrl, afterUrl]);
 
   const setFromClientX = useCallback((clientX: number) => {
     const el = trackRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
+    if (rect.width <= 0) return;
     const x = ((clientX - rect.left) / rect.width) * 100;
     setPos(Math.min(100, Math.max(0, x)));
   }, []);
 
-  const onPointerDown = (e: PointerEvent) => {
+  const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
     dragging.current = true;
     e.currentTarget.setPointerCapture(e.pointerId);
     setFromClientX(e.clientX);
   };
 
-  const onPointerMove = (e: PointerEvent) => {
+  const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
     if (!dragging.current) return;
     setFromClientX(e.clientX);
   };
 
-  const onPointerUp = (e: PointerEvent) => {
+  const onPointerUp = (e: PointerEvent<HTMLDivElement>) => {
     dragging.current = false;
-    e.currentTarget.releasePointerCapture(e.pointerId);
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
   };
 
-  const hasMedia = Boolean(beforeUrl || afterUrl);
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      setPos((p) => Math.max(0, p - 2));
+    }
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      setPos((p) => Math.min(100, p + 2));
+    }
+    if (e.key === "Home") {
+      e.preventDefault();
+      setPos(0);
+    }
+    if (e.key === "End") {
+      e.preventDefault();
+      setPos(100);
+    }
+  };
+
+  const hasBefore = Boolean(beforeUrl);
+  const hasAfter = Boolean(afterUrl);
+  const hasMedia = hasBefore || hasAfter;
+  const baseUrl = afterUrl || beforeUrl;
 
   return (
     <div className="compare">
       <div className="section-head">
         <h3>Quality compare</h3>
-        <p>Drag the handle — judge edges, noise, and faces at 100% feel.</p>
+        <p>Drag the handle — left is original, right is enhanced.</p>
       </div>
 
       <div
         ref={trackRef}
-        className="compare-track"
+        className={`compare-track${hasMedia ? " has-media" : ""}`}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -68,12 +120,9 @@ export function CompareSlider({
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(pos)}
-        aria-label="Before after comparison"
+        aria-label="Original versus enhanced comparison"
         tabIndex={0}
-        onKeyDown={(e) => {
-          if (e.key === "ArrowLeft") setPos((p) => Math.max(0, p - 3));
-          if (e.key === "ArrowRight") setPos((p) => Math.min(100, p + 3));
-        }}
+        onKeyDown={onKeyDown}
       >
         {!hasMedia && (
           <div className="compare-empty">
@@ -81,31 +130,39 @@ export function CompareSlider({
           </div>
         )}
 
-        {hasMedia && (
+        {hasMedia && baseUrl && (
           <>
-            <div className="compare-layer compare-before">
-              {beforeUrl ? (
-                <img src={beforeUrl} alt={beforeLabel} draggable={false} />
-              ) : (
-                <div className="compare-ph">{beforeLabel}</div>
-              )}
+            <div className="compare-layer compare-base">
+              <img
+                src={baseUrl}
+                alt={hasAfter ? afterLabel : beforeLabel}
+                draggable={false}
+              />
             </div>
-            <div
-              className="compare-layer compare-after"
-              style={{ clipPath: `inset(0 ${100 - pos}% 0 0)` }}
-            >
-              {afterUrl ? (
-                <img src={afterUrl} alt={afterLabel} draggable={false} />
-              ) : (
-                <div className="compare-ph enhanced">{afterLabel}</div>
-              )}
-            </div>
-            <div className="compare-handle" style={{ left: `${pos}%` }}>
-              <div className="compare-line" />
-              <div className="compare-knob" aria-hidden>
-                ‹ ›
+
+            {hasBefore && beforeUrl && (
+              <div
+                className="compare-layer compare-reveal"
+                style={{ width: `${pos}%` }}
+              >
+                <div
+                  className="compare-reveal-inner"
+                  style={{ width: trackW > 0 ? `${trackW}px` : "100vw" }}
+                >
+                  <img src={beforeUrl} alt={beforeLabel} draggable={false} />
+                </div>
               </div>
+            )}
+
+            <div
+              className="compare-handle"
+              style={{ left: `${pos}%` }}
+              aria-hidden
+            >
+              <div className="compare-line" />
+              <div className="compare-knob">‹ ›</div>
             </div>
+
             <span className="compare-tag left">{beforeLabel}</span>
             <span className="compare-tag right">{afterLabel}</span>
           </>
