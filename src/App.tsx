@@ -48,8 +48,8 @@ export default function App() {
   const [job, setJob] = useState<UpscaleJob | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
 
-  // Keep latest blob URLs in refs so we only revoke on replace/unmount — not Strict Mode double-mount
   const previewRef = useRef<string | null>(null);
   const afterRef = useRef<string | null>(null);
 
@@ -63,13 +63,22 @@ export default function App() {
     };
   }, []);
 
-  // Single unmount cleanup for blob URLs
   useEffect(() => {
     return () => {
       revokeQuiet(previewRef.current);
       revokeQuiet(afterRef.current);
     };
   }, []);
+
+  // Escape closes fullscreen
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFullscreen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fullscreen]);
 
   const ready = useMemo(
     () => (caps ? canRunLocalUpscale(caps) : false),
@@ -96,6 +105,7 @@ export default function App() {
     setResult(null);
     setError(null);
     setAfter(null);
+    setFullscreen(false);
 
     const isImage =
       f.type.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(f.name);
@@ -118,6 +128,7 @@ export default function App() {
     setJob(null);
     setBusy(false);
     setError(null);
+    setFullscreen(false);
   };
 
   const start = async () => {
@@ -143,7 +154,6 @@ export default function App() {
     });
 
     try {
-      // Ensure original preview still exists for images (recreate if needed)
       if (job.isImage && !previewRef.current) {
         setPreview(URL.createObjectURL(file));
       }
@@ -162,11 +172,9 @@ export default function App() {
         );
       });
 
-      // Do not revoke enhanced.objectUrl here — owned by afterRef
       setAfter(enhanced.objectUrl);
       setResult(enhanced);
 
-      // Recreate original preview if it was lost so compare works
       if (job.isImage && !previewRef.current) {
         setPreview(URL.createObjectURL(file));
       }
@@ -178,10 +186,7 @@ export default function App() {
               status: "done",
               progress: 100,
               stageLabel: "Done",
-              message:
-                enhanced.kind === "image"
-                  ? `Enhanced to ${enhanced.width}×${enhanced.height}. Drag to compare, then download.`
-                  : `Enhanced video ${enhanced.width}×${enhanced.height}. Download when ready.`,
+              message: `Enhanced to ${enhanced.width}×${enhanced.height}`,
             }
           : prev,
       );
@@ -216,42 +221,98 @@ export default function App() {
     <div className="app">
       <main className="app-main">
         <div className="landing">
-          <div className="landing-brand">
-            <FoxMark />
-            Foxy&apos;s Lab
-          </div>
+          {/* Hide big title chrome once in result mode for cleaner competitor-like focus */}
+          {!done && (
+            <>
+              <div className="landing-brand">
+                <FoxMark />
+                Foxy&apos;s Lab
+              </div>
+              <h1>Foxy&apos;s Premium Upscaling</h1>
+              <p className="landing-lede">
+                Upscale videos or images in your browser — free, private,
+                automatic. Files never leave your device.
+              </p>
+            </>
+          )}
 
-          <h1>Foxy&apos;s Premium Upscaling</h1>
-
-          <p className="landing-lede">
-            Upscale videos or images with AI-style enhancement in your browser —
-            free, private, automatic. Files never leave your device.
-          </p>
+          {done && (
+            <div className="landing-brand result-brand">
+              <FoxMark />
+              Foxy&apos;s Premium Upscaling
+            </div>
+          )}
 
           {!hasFile ? (
             <>
               <DropZone onFile={onFile} disabled={busy} variant="landing" />
-
               <div className="landing-trust">
                 <span className="trust-chip">
                   <strong>One click</strong> — no settings
                 </span>
                 <span className="trust-chip">
-                  <strong>2×</strong> local enhance
+                  <strong>Local</strong> AI-style enhance
                 </span>
                 <span className="trust-chip">
-                  <strong>No</strong> upload · no watermark
+                  <strong>No</strong> watermark
                 </span>
               </div>
             </>
+          ) : done ? (
+            /* ——— Competitor-style result card ——— */
+            <div className="result-card">
+              <CompareSlider
+                beforeUrl={previewUrl}
+                afterUrl={afterUrl}
+                compact
+              />
+
+              <button
+                type="button"
+                className="btn-fullscreen"
+                onClick={() => setFullscreen(true)}
+              >
+                <span className="fs-icon" aria-hidden>
+                  ⛶
+                </span>
+                View Fullscreen Comparison
+              </button>
+
+              <div className="result-actions">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={clear}
+                >
+                  Upscale another
+                  <span aria-hidden> ↻</span>
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary-solid"
+                  onClick={onDownload}
+                >
+                  Download upscaled {result?.kind === "video" ? "video" : "image"}
+                  <span aria-hidden> ↓</span>
+                </button>
+              </div>
+
+              {result && (
+                <p className="result-meta">
+                  {result.width}×{result.height}
+                  {job?.fileName ? ` · from ${job.fileName}` : ""}
+                </p>
+              )}
+            </div>
           ) : (
+            /* ——— Working state: file + enhance ——— */
             <div className="simple-workspace">
               <div className="file-chip simple-file">
                 <div>
                   <strong>{job!.fileName}</strong>
                   <span>
                     {formatBytes(job!.fileSize)}
-                    {job!.isVideo ? " · video" : job!.isImage ? " · image" : ""}
+                    {job!.isVideo ? " · video" : " · image"}
                   </span>
                 </div>
                 <button
@@ -264,24 +325,15 @@ export default function App() {
                 </button>
               </div>
 
-              {(previewUrl || afterUrl || job!.isImage) && (
-                <div className="simple-compare">
-                  <CompareSlider
-                    beforeUrl={previewUrl}
-                    afterUrl={afterUrl}
-                    emptyHint={
-                      job!.isVideo
-                        ? "Video: press Enhance, then download. Frame compare works best for images."
-                        : "Press Enhance, then drag — left original, right enhanced."
-                    }
-                  />
+              {previewUrl && !busy && (
+                <div className="pre-enhance-thumb">
+                  <img src={previewUrl} alt="Selected" />
                 </div>
               )}
 
-              {job!.isVideo && !previewUrl && !afterUrl && (
+              {job!.isVideo && !previewUrl && (
                 <p className="simple-done-note">
-                  Video selected. Enhancement runs fully on your device (2× +
-                  clarity). Output downloads as WebM.
+                  Video selected. Runs fully on your device. Output: WebM.
                 </p>
               )}
 
@@ -292,17 +344,8 @@ export default function App() {
                   disabled={!ready || busy}
                   onClick={start}
                 >
-                  {busy ? "Enhancing…" : done ? "Enhance again" : "Enhance"}
+                  {busy ? "Upscaling…" : "Upscale"}
                 </button>
-                {done && (
-                  <button
-                    type="button"
-                    className="dropzone-btn download-btn"
-                    onClick={onDownload}
-                  >
-                    Download
-                  </button>
-                )}
               </div>
 
               <ProgressPanel job={job} />
@@ -315,8 +358,7 @@ export default function App() {
 
               {!ready && caps && (
                 <div className="notice warn">
-                  <strong>Browser not ready.</strong> WebGL is required. Use
-                  Chrome or Edge on a computer.{" "}
+                  <strong>Browser not ready.</strong> Use Chrome or Edge.{" "}
                   <span className="muted">{caps.details.join(" · ")}</span>
                 </div>
               )}
@@ -324,6 +366,38 @@ export default function App() {
           )}
         </div>
       </main>
+
+      {fullscreen && (previewUrl || afterUrl) && (
+        <div
+          className="fs-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Fullscreen comparison"
+          onClick={() => setFullscreen(false)}
+        >
+          <div
+            className="fs-panel"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="fs-top">
+              <span>Fullscreen comparison</span>
+              <button
+                type="button"
+                className="ghost sm"
+                onClick={() => setFullscreen(false)}
+              >
+                Close ✕
+              </button>
+            </div>
+            <CompareSlider
+              beforeUrl={previewUrl}
+              afterUrl={afterUrl}
+              compact
+              className="fs-track"
+            />
+          </div>
+        </div>
+      )}
 
       <footer className="site-footer">
         <div className="site-footer-inner">

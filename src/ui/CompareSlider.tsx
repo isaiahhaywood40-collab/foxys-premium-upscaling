@@ -13,12 +13,16 @@ interface CompareSliderProps {
   beforeLabel?: string;
   afterLabel?: string;
   emptyHint?: string;
+  /** Hide section header (for compact result card). */
+  compact?: boolean;
+  /** Extra class on track (e.g. fullscreen). */
+  className?: string;
 }
 
 /**
- * Before / after scrubber.
- * Full enhanced image underneath; original on top, width = pos% (left = original).
- * Both images share the same box size so pixels stay aligned while dragging.
+ * Competitor-style before/after scrubber.
+ * Portrait-friendly: track aspect follows the image.
+ * Left = original, right = enhanced.
  */
 export function CompareSlider({
   beforeUrl,
@@ -26,27 +30,44 @@ export function CompareSlider({
   beforeLabel = "Original",
   afterLabel = "Enhanced",
   emptyHint = "Load a file and run enhance to compare quality here.",
+  compact = false,
+  className = "",
 }: CompareSliderProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState(50);
   const [trackW, setTrackW] = useState(0);
+  const [aspect, setAspect] = useState<number | null>(null);
   const dragging = useRef(false);
 
   useEffect(() => {
     setPos(50);
   }, [beforeUrl, afterUrl]);
 
+  // Measure natural aspect from whichever image loads
+  useEffect(() => {
+    const url = afterUrl || beforeUrl;
+    if (!url) {
+      setAspect(null);
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+        setAspect(img.naturalWidth / img.naturalHeight);
+      }
+    };
+    img.src = url;
+  }, [beforeUrl, afterUrl]);
+
   useEffect(() => {
     const el = trackRef.current;
     if (!el) return;
-
     const measure = () => setTrackW(el.clientWidth);
     measure();
-
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [beforeUrl, afterUrl]);
+  }, [beforeUrl, afterUrl, aspect]);
 
   const setFromClientX = useCallback((clientX: number) => {
     const el = trackRef.current;
@@ -87,14 +108,6 @@ export function CompareSlider({
       e.preventDefault();
       setPos((p) => Math.min(100, p + 2));
     }
-    if (e.key === "Home") {
-      e.preventDefault();
-      setPos(0);
-    }
-    if (e.key === "End") {
-      e.preventDefault();
-      setPos(100);
-    }
   };
 
   const hasBefore = Boolean(beforeUrl);
@@ -102,16 +115,24 @@ export function CompareSlider({
   const hasMedia = hasBefore || hasAfter;
   const baseUrl = afterUrl || beforeUrl;
 
+  const trackStyle =
+    aspect != null
+      ? { aspectRatio: `${aspect}`, maxHeight: "min(70vh, 640px)" as const }
+      : undefined;
+
   return (
-    <div className="compare">
-      <div className="section-head">
-        <h3>Quality compare</h3>
-        <p>Drag the handle — left is original, right is enhanced.</p>
-      </div>
+    <div className={`compare${compact ? " compare-compact" : ""}`}>
+      {!compact && (
+        <div className="section-head">
+          <h3>Quality compare</h3>
+          <p>Drag the handle — left original, right enhanced.</p>
+        </div>
+      )}
 
       <div
         ref={trackRef}
-        className={`compare-track${hasMedia ? " has-media" : ""}`}
+        className={`compare-track${hasMedia ? " has-media" : ""} ${className}`.trim()}
+        style={trackStyle}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -160,11 +181,11 @@ export function CompareSlider({
               aria-hidden
             >
               <div className="compare-line" />
-              <div className="compare-knob">‹ ›</div>
+              <div className="compare-knob">
+                <span className="knob-tri knob-left" />
+                <span className="knob-tri knob-right" />
+              </div>
             </div>
-
-            <span className="compare-tag left">{beforeLabel}</span>
-            <span className="compare-tag right">{afterLabel}</span>
           </>
         )}
       </div>
