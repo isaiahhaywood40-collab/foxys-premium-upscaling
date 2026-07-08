@@ -864,7 +864,8 @@ input[type="range"]:focus-visible,
   margin-top: auto;
   padding: 1.25rem 1.25rem 1.75rem;
   border-top: 1px solid var(--border);
-  background: var(--bg);
+  background: rgba(7, 10, 18, 0.85);
+  backdrop-filter: blur(10px);
 }
 
 .site-footer-inner {
