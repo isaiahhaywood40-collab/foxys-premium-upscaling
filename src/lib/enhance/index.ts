@@ -6,8 +6,11 @@ export type EnhanceResult = (
   | ImageEnhanceResult
   | (VideoEnhanceResult & {
       compareBeforeUrl?: string;
-      engine?: "esrgan" | "websr" | "webgl";
+      cropBeforeUrl?: string;
+      cropAfterUrl?: string;
+      engine?: "websr" | "webgl";
       network?: string;
+      elapsedMs?: number;
     })
 ) & {
   kind: "image" | "video";

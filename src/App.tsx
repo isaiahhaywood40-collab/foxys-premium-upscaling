@@ -16,6 +16,7 @@ import {
   type EnhanceResult,
 } from "./lib/enhance";
 import { CompareSlider } from "./ui/CompareSlider";
+import { DetailCrops } from "./ui/DetailCrops";
 import { DropZone } from "./ui/DropZone";
 import { ProgressPanel } from "./ui/ProgressPanel";
 
@@ -112,10 +113,6 @@ export default function App() {
 
     if (isImage) {
       setPreview(URL.createObjectURL(f));
-      // Warm ESRGAN while user looks at the preview (hides model-load delay)
-      void import("./lib/enhance/esrgan-engine")
-        .then((m) => m.preloadEsrgan())
-        .catch(() => undefined);
     } else {
       setPreview(null);
     }
@@ -291,6 +288,17 @@ export default function App() {
                 compact
               />
 
+              {"cropBeforeUrl" in (result ?? {}) &&
+                result &&
+                "cropBeforeUrl" in result &&
+                result.cropBeforeUrl &&
+                result.cropAfterUrl && (
+                  <DetailCrops
+                    beforeUrl={result.cropBeforeUrl}
+                    afterUrl={result.cropAfterUrl}
+                  />
+                )}
+
               <button
                 type="button"
                 className="btn-fullscreen"
@@ -325,11 +333,12 @@ export default function App() {
                 <p className="result-meta">
                   {result.width}×{result.height}
                   {"engine" in result
-                    ? result.engine === "esrgan"
-                      ? ` · ESRGAN-thick ${"network" in result && result.network ? result.network : ""}`
-                      : result.engine === "websr"
-                        ? ` · WebSR ${"network" in result && result.network ? result.network : ""}`
-                        : " · WebGL fallback (mild)"
+                    ? result.engine === "websr"
+                      ? ` · WebSR ${"network" in result && result.network ? result.network : ""}`
+                      : " · WebGL fallback"
+                    : ""}
+                  {"elapsedMs" in result && result.elapsedMs
+                    ? ` · ${(result.elapsedMs / 1000).toFixed(1)}s`
                     : ""}
                   {job?.fileName ? ` · ${job.fileName}` : ""}
                 </p>
