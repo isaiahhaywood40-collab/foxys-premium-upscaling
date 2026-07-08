@@ -186,10 +186,18 @@ export default function App() {
         setPreview(URL.createObjectURL(file));
       }
 
+      const eng =
+        "engine" in enhanced ? (enhanced as { engine: string }).engine : "";
+      const net =
+        "network" in enhanced
+          ? (enhanced as { network?: string }).network
+          : undefined;
       const engineLabel =
-        "engine" in enhanced && enhanced.engine === "websr"
-          ? ` · AI ${(enhanced as { network?: string }).network || "WebSR"}`
-          : " · WebGL fallback (enable WebGPU in Chrome for real AI)";
+        eng === "esrgan"
+          ? ` · ESRGAN AI (${net || "thick"}) — strong`
+          : eng === "websr"
+            ? ` · WebSR (${net || "Anime4K"})`
+            : " · WebGL fallback (mild)";
 
       setJob((prev) =>
         prev
@@ -313,9 +321,11 @@ export default function App() {
                 <p className="result-meta">
                   {result.width}×{result.height}
                   {"engine" in result
-                    ? result.engine === "websr"
-                      ? ` · AI ${"network" in result && result.network ? result.network : "WebSR"}`
-                      : " · WebGL fallback — use Chrome/Edge + WebGPU for full AI"
+                    ? result.engine === "esrgan"
+                      ? ` · ESRGAN-thick ${"network" in result && result.network ? result.network : ""}`
+                      : result.engine === "websr"
+                        ? ` · WebSR ${"network" in result && result.network ? result.network : ""}`
+                        : " · WebGL fallback (mild)"
                     : ""}
                   {job?.fileName ? ` · ${job.fileName}` : ""}
                 </p>

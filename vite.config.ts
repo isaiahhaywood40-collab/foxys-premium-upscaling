@@ -10,11 +10,17 @@ export default defineConfig({
     format: "es",
   },
   optimizeDeps: {
-    include: ["@websr/websr"],
+    include: [
+      "@websr/websr",
+      "upscaler",
+      "@tensorflow/tfjs",
+      "@upscalerjs/esrgan-thick",
+    ],
   },
   build: {
     target: "es2022",
     sourcemap: true,
+    chunkSizeWarningLimit: 2000,
     commonjsOptions: {
       include: [/node_modules/],
       transformMixedEsModules: true,

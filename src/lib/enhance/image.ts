@@ -4,11 +4,11 @@ import { enhanceWithWebSR, isWebSRAvailable } from "./websr-engine";
 export interface ImageEnhanceResult {
   blob: Blob;
   objectUrl: string;
-  /** Left side of compare: bilinear 2× original (fair apples-to-apples). */
+  /** Left side of compare: bilinear upscale of original (fair compare). */
   compareBeforeUrl: string;
   width: number;
   height: number;
-  engine: "websr" | "webgl";
+  engine: "esrgan" | "websr" | "webgl";
   network?: string;
 }
 
@@ -28,10 +28,13 @@ function loadImage(file: File): Promise<HTMLImageElement> {
   });
 }
 
-async function bilinear2xUrl(img: HTMLImageElement): Promise<string> {
+async function bilinearUrl(
+  img: HTMLImageElement,
+  scale: number,
+): Promise<string> {
   const c = document.createElement("canvas");
-  c.width = img.naturalWidth * 2;
-  c.height = img.naturalHeight * 2;
+  c.width = Math.round(img.naturalWidth * scale);
+  c.height = Math.round(img.naturalHeight * scale);
   const ctx = c.getContext("2d", { alpha: false });
   if (!ctx) throw new Error("2D context missing");
   ctx.imageSmoothingEnabled = true;
@@ -41,43 +44,80 @@ async function bilinear2xUrl(img: HTMLImageElement): Promise<string> {
   return URL.createObjectURL(blob);
 }
 
-/** Prefer WebSR Anime4K CNN (free.upscaler engine). WebGL only if WebGPU missing. */
+/**
+ * Quality order (strongest first):
+ * 1. ESRGAN-thick (Real-ESRGAN class) — dramatic detail
+ * 2. WebSR Anime4K CNN — free.upscaler family
+ * 3. WebGL filters — last resort
+ */
 export async function enhanceImage(
   file: File,
   onProgress?: ProgressCb,
 ): Promise<ImageEnhanceResult> {
-  onProgress?.({ phase: "Reading image", progress: 4 });
+  onProgress?.({ phase: "Reading image", progress: 3 });
   const img = await loadImage(file);
 
   const preferJpeg =
     file.type === "image/jpeg" || /\.jpe?g$/i.test(file.name);
   const usePng = !preferJpeg || /\.png$/i.test(file.name);
 
-  // ——— Primary: WebSR neural engine (required for competitor-class quality) ———
-  const available = await isWebSRAvailable();
-  if (!available) {
-    console.warn("WebGPU unavailable — WebGL fallback (weaker quality)");
-  } else {
-    try {
+  const encode = async (canvas: HTMLCanvasElement) => {
+    const blob = await canvasToBlob(
+      canvas,
+      usePng ? "image/png" : "image/jpeg",
+      usePng ? undefined : 0.95,
+    );
+    return blob;
+  };
+
+  // ——— 1) ESRGAN thick (strong Real-ESRGAN class) ———
+  try {
+    onProgress?.({ phase: "Loading strong AI engine (ESRGAN)…", progress: 5 });
+    const { enhanceWithEsrgan, isEsrganAvailable } = await import(
+      "./esrgan-engine"
+    );
+    if (await isEsrganAvailable()) {
+      const result = await enhanceWithEsrgan(
+        img,
+        img.naturalWidth,
+        img.naturalHeight,
+        onProgress,
+      );
+      const blob = await encode(result.canvas);
+      const compareBeforeBlob = await canvasToBlob(
+        result.bilinearCompare,
+        "image/png",
+      );
+      onProgress?.({ phase: "Done", progress: 100 });
+      return {
+        blob,
+        objectUrl: URL.createObjectURL(blob),
+        compareBeforeUrl: URL.createObjectURL(compareBeforeBlob),
+        width: result.width,
+        height: result.height,
+        engine: "esrgan",
+        network: result.network,
+      };
+    }
+  } catch (e) {
+    console.error("ESRGAN path failed:", e);
+    onProgress?.({ phase: "ESRGAN failed — trying WebSR…", progress: 12 });
+  }
+
+  // ——— 2) WebSR Anime4K ———
+  try {
+    if (await isWebSRAvailable()) {
       const result = await enhanceWithWebSR(
         img,
         img.naturalWidth,
         img.naturalHeight,
         onProgress,
       );
-
-      onProgress?.({ phase: "Encoding", progress: 94 });
-      const blob = await canvasToBlob(
-        result.canvas,
-        usePng ? "image/png" : "image/jpeg",
-        usePng ? undefined : 0.95,
-      );
-
+      const blob = await encode(result.canvas);
       const compareBeforeBlob = await canvasToBlob(
         result.bilinearCompare,
         "image/png",
       );
-
       onProgress?.({ phase: "Done", progress: 100 });
       return {
         blob,
@@ -88,39 +128,28 @@ export async function enhanceImage(
         engine: "websr",
         network: result.network,
       };
-    } catch (e) {
-      console.error("WebSR failed:", e);
-      onProgress?.({
-        phase: "AI engine error — trying fallback",
-        progress: 15,
-      });
-      // fall through to WebGL
     }
+  } catch (e) {
+    console.error("WebSR path failed:", e);
+    onProgress?.({ phase: "WebSR failed — WebGL fallback…", progress: 18 });
   }
 
-  // ——— Fallback WebGL (weaker — only if AI path fails) ———
-  onProgress?.({ phase: "WebGL fallback enhance", progress: 30 });
-  const compareBeforeUrl = await bilinear2xUrl(img);
+  // ——— 3) WebGL last resort ———
+  onProgress?.({ phase: "WebGL enhance", progress: 30 });
+  const compareBeforeUrl = await bilinearUrl(img, 2);
   const engine = new WebGLEnhancer();
   try {
-    const long = Math.max(img.naturalWidth, img.naturalHeight);
-    const scale = long < 640 ? 4 : long < 1280 ? 3 : 2;
     let canvas = engine.enhanceSource(
       img,
       img.naturalWidth,
       img.naturalHeight,
-      { scale, strength: 1.0 },
+      { scale: 2, strength: 1.0 },
     );
     canvas = engine.enhanceSource(canvas, canvas.width, canvas.height, {
       scale: 1,
-      strength: 0.85,
+      strength: 0.9,
     });
-    onProgress?.({ phase: "Encoding", progress: 90 });
-    const blob = await canvasToBlob(
-      canvas,
-      usePng ? "image/png" : "image/jpeg",
-      usePng ? undefined : 0.95,
-    );
+    const blob = await encode(canvas);
     onProgress?.({ phase: "Done", progress: 100 });
     return {
       blob,

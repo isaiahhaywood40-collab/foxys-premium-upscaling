@@ -12,14 +12,20 @@ Processing is **100% on-device** (WebGL). No signup. No upload. No watermark.
 ## How it works
 
 ```
-File → WebSR Anime4K CNN (WebGPU) 2× → compare / download
-              ↑ same engine family as free.upscaler.video
-         fallback: multi-pass WebGL if no WebGPU
+File
+  → 1) ESRGAN-thick (UpscalerJS / Real-ESRGAN class)  ← strongest
+  → 2) WebSR Anime4K CNN (free.upscaler family)
+  → 3) WebGL filters
+  → compare + download
 ```
 
-**Primary engine:** [`@websr/websr`](https://github.com/sb2702/websr) — WebGPU neural nets from **Anime4K** (default **cnn-2x-l** animation weights), the same stack free.upscaler.video is built on.
+**Primary engine:** [UpscalerJS](https://upscalerjs.com) + **`@upscalerjs/esrgan-thick`** (2× or 4×) — Real-ESRGAN-class detail, much stronger than mild Anime4K realtime nets on AI art.
 
-**Fallback:** multi-pass WebGL (clarity / CAS / lines) if WebGPU is missing.
+**Secondary:** [`@websr/websr`](https://github.com/sb2702/websr) Anime4K CNN (same family as free.upscaler.video).
+
+**Fallback:** multi-pass WebGL.
+
+First ESRGAN run downloads ~28MB model weights from jsDelivr (then cached by the browser).
 
 - **Images** → PNG or JPEG + before/after scrubber  
 - **Video** → WebM via MediaRecorder (AI path when WebGPU available)  

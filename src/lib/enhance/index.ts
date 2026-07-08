@@ -4,7 +4,11 @@ import type { ProgressCb } from "./webgl";
 
 export type EnhanceResult = (
   | ImageEnhanceResult
-  | (VideoEnhanceResult & { compareBeforeUrl?: string })
+  | (VideoEnhanceResult & {
+      compareBeforeUrl?: string;
+      engine?: "esrgan" | "websr" | "webgl";
+      network?: string;
+    })
 ) & {
   kind: "image" | "video";
   downloadName: string;
