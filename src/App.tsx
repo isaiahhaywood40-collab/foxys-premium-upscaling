@@ -175,9 +175,21 @@ export default function App() {
       setAfter(enhanced.objectUrl);
       setResult(enhanced);
 
-      if (job.isImage && !previewRef.current) {
+      // Free.upscaler style compare: left = bilinear 2× original, right = AI 2×
+      if (
+        "compareBeforeUrl" in enhanced &&
+        typeof enhanced.compareBeforeUrl === "string" &&
+        enhanced.compareBeforeUrl
+      ) {
+        setPreview(enhanced.compareBeforeUrl);
+      } else if (job.isImage && !previewRef.current) {
         setPreview(URL.createObjectURL(file));
       }
+
+      const engineLabel =
+        "engine" in enhanced && enhanced.engine === "websr"
+          ? ` · AI ${(enhanced as { network?: string }).network || "WebSR"}`
+          : " · WebGL fallback (enable WebGPU in Chrome for real AI)";
 
       setJob((prev) =>
         prev
@@ -186,11 +198,7 @@ export default function App() {
               status: "done",
               progress: 100,
               stageLabel: "Done",
-              message: `Enhanced to ${enhanced.width}×${enhanced.height}${
-                "engine" in enhanced && enhanced.engine === "websr"
-                  ? " · AI engine (Anime4K CNN / WebSR)"
-                  : " · WebGL fallback"
-              }`,
+              message: `Enhanced to ${enhanced.width}×${enhanced.height}${engineLabel}`,
             }
           : prev,
       );
@@ -306,8 +314,8 @@ export default function App() {
                   {result.width}×{result.height}
                   {"engine" in result
                     ? result.engine === "websr"
-                      ? " · WebSR AI (Anime4K CNN)"
-                      : " · WebGL fallback"
+                      ? ` · AI ${"network" in result && result.network ? result.network : "WebSR"}`
+                      : " · WebGL fallback — use Chrome/Edge + WebGPU for full AI"
                     : ""}
                   {job?.fileName ? ` · ${job.fileName}` : ""}
                 </p>

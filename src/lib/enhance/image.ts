@@ -4,6 +4,8 @@ import { enhanceWithWebSR, isWebSRAvailable } from "./websr-engine";
 export interface ImageEnhanceResult {
   blob: Blob;
   objectUrl: string;
+  /** Left side of compare: bilinear 2× original (fair apples-to-apples). */
+  compareBeforeUrl: string;
   width: number;
   height: number;
   engine: "websr" | "webgl";
@@ -26,7 +28,20 @@ function loadImage(file: File): Promise<HTMLImageElement> {
   });
 }
 
-/** Prefer WebSR (Anime4K CNN / same stack as free.upscaler). WebGL fallback. */
+async function bilinear2xUrl(img: HTMLImageElement): Promise<string> {
+  const c = document.createElement("canvas");
+  c.width = img.naturalWidth * 2;
+  c.height = img.naturalHeight * 2;
+  const ctx = c.getContext("2d", { alpha: false });
+  if (!ctx) throw new Error("2D context missing");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, 0, 0, c.width, c.height);
+  const blob = await canvasToBlob(c, "image/png");
+  return URL.createObjectURL(blob);
+}
+
+/** Prefer WebSR Anime4K CNN (free.upscaler engine). WebGL only if WebGPU missing. */
 export async function enhanceImage(
   file: File,
   onProgress?: ProgressCb,
@@ -38,43 +53,54 @@ export async function enhanceImage(
     file.type === "image/jpeg" || /\.jpe?g$/i.test(file.name);
   const usePng = !preferJpeg || /\.png$/i.test(file.name);
 
-  // ——— Primary: WebSR neural engine ———
-  try {
-    const available = await isWebSRAvailable();
-    if (available) {
+  // ——— Primary: WebSR neural engine (required for competitor-class quality) ———
+  const available = await isWebSRAvailable();
+  if (!available) {
+    console.warn("WebGPU unavailable — WebGL fallback (weaker quality)");
+  } else {
+    try {
       const result = await enhanceWithWebSR(
         img,
         img.naturalWidth,
         img.naturalHeight,
         onProgress,
-        "l",
       );
 
-      onProgress?.({ phase: "Encoding", progress: 92 });
+      onProgress?.({ phase: "Encoding", progress: 94 });
       const blob = await canvasToBlob(
         result.canvas,
         usePng ? "image/png" : "image/jpeg",
         usePng ? undefined : 0.95,
       );
+
+      const compareBeforeBlob = await canvasToBlob(
+        result.bilinearCompare,
+        "image/png",
+      );
+
+      onProgress?.({ phase: "Done", progress: 100 });
       return {
         blob,
         objectUrl: URL.createObjectURL(blob),
+        compareBeforeUrl: URL.createObjectURL(compareBeforeBlob),
         width: result.width,
         height: result.height,
         engine: "websr",
         network: result.network,
       };
+    } catch (e) {
+      console.error("WebSR failed:", e);
+      onProgress?.({
+        phase: "AI engine error — trying fallback",
+        progress: 15,
+      });
+      // fall through to WebGL
     }
-  } catch (e) {
-    console.warn("WebSR path failed, falling back to WebGL", e);
-    onProgress?.({
-      phase: "AI engine unavailable — using fallback",
-      progress: 20,
-    });
   }
 
-  // ——— Fallback: multi-pass WebGL ———
-  onProgress?.({ phase: "WebGL enhance", progress: 30 });
+  // ——— Fallback WebGL (weaker — only if AI path fails) ———
+  onProgress?.({ phase: "WebGL fallback enhance", progress: 30 });
+  const compareBeforeUrl = await bilinear2xUrl(img);
   const engine = new WebGLEnhancer();
   try {
     const long = Math.max(img.naturalWidth, img.naturalHeight);
@@ -83,12 +109,11 @@ export async function enhanceImage(
       img,
       img.naturalWidth,
       img.naturalHeight,
-      { scale, strength: 0.95 },
+      { scale, strength: 1.0 },
     );
-    onProgress?.({ phase: "Clarity pass", progress: 70 });
     canvas = engine.enhanceSource(canvas, canvas.width, canvas.height, {
       scale: 1,
-      strength: 0.75,
+      strength: 0.85,
     });
     onProgress?.({ phase: "Encoding", progress: 90 });
     const blob = await canvasToBlob(
@@ -100,6 +125,7 @@ export async function enhanceImage(
     return {
       blob,
       objectUrl: URL.createObjectURL(blob),
+      compareBeforeUrl,
       width: canvas.width,
       height: canvas.height,
       engine: "webgl",

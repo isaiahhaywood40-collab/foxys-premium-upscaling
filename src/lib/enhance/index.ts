@@ -2,7 +2,10 @@ import { enhanceImage, type ImageEnhanceResult } from "./image";
 import { enhanceVideo, type VideoEnhanceResult } from "./video";
 import type { ProgressCb } from "./webgl";
 
-export type EnhanceResult = (ImageEnhanceResult | VideoEnhanceResult) & {
+export type EnhanceResult = (
+  | ImageEnhanceResult
+  | (VideoEnhanceResult & { compareBeforeUrl?: string })
+) & {
   kind: "image" | "video";
   downloadName: string;
 };
@@ -28,7 +31,6 @@ function outName(file: File, kind: "image" | "video"): string {
   return `${base}-foxy-2x.webm`;
 }
 
-/** Single entry: WebSR (Anime4K CNN) first, WebGL fallback. */
 export async function enhanceMedia(
   file: File,
   onProgress?: ProgressCb,

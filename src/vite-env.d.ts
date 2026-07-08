@@ -1,7 +1,13 @@
 /// <reference types="vite/client" />
 
+interface GPUQueue {
+  onSubmittedWorkDone(): Promise<void>;
+}
+
 interface GPUDevice {
   destroy?: () => void;
+  queue: GPUQueue;
+  readonly lost: Promise<unknown>;
 }
 
 interface GPUAdapter {

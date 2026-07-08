@@ -1,92 +1,148 @@
 /**
- * WebSR engine — same family as free.upscaler.video:
- * Anime4K CNN super-resolution on WebGPU (@websr/websr).
+ * WebSR / Anime4K CNN engine — same stack as free.upscaler.video.
  *
- * Default: anime4k/cnn-2x-l (large, animation weights) for best quality.
- * Falls back to medium/small if large fails, then throws for WebGL path.
+ * Critical fixes vs first integration:
+ * - Cache GPU device (never destroy on probe)
+ * - Feed createImageBitmap sources like free.upscaler
+ * - Wait for GPU queue + createImageBitmap readback (WebGPU canvas ≠ 2d copy)
+ * - Optional restore (1×) then cnn-2x-l (2×) for stronger results
+ * - Bundle weights so GitHub Pages always finds them
  */
 
 import type { ProgressCb } from "./webgl";
+import WebSR from "@websr/websr";
 
-// Package ships CJS webpack build; Vite handles default import.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type WebSRCtor = {
-  new (params: {
-    canvas: HTMLCanvasElement;
-    weights: unknown;
-    network_name: string;
-    gpu: GPUDevice;
-    resolution?: { width: number; height: number };
-  }): {
-    canvas: HTMLCanvasElement;
-    render: (source: CanvasImageSource) => Promise<void>;
-    destroy: () => Promise<void>;
-  };
-  initWebGPU: () => Promise<GPUDevice | false>;
-};
+// Animation-tuned weights (best for AI anime / furry art)
+import weights2xL from "../../weights/anime4k/cnn-2x-l-an.json";
+import weights2xM from "../../weights/anime4k/cnn-2x-m-an.json";
+import weights2xS from "../../weights/anime4k/cnn-2x-s-an.json";
+import weightsRestoreL from "../../weights/anime4k/cnn-restore-l-an.json";
 
-async function loadWebSR(): Promise<WebSRCtor> {
-  const mod = await import("@websr/websr");
-  // default export or module.exports
-  const WebSR = (mod as { default?: WebSRCtor }).default ?? (mod as unknown as WebSRCtor);
-  if (!WebSR?.initWebGPU) {
-    throw new Error("WebSR module failed to load");
+type NetworkName =
+  | "anime4k/cnn-2x-l"
+  | "anime4k/cnn-2x-m"
+  | "anime4k/cnn-2x-s"
+  | "anime4k/cnn-restore-l";
+
+let cachedDevice: GPUDevice | null = null;
+let deviceLost = false;
+
+async function getDevice(): Promise<GPUDevice> {
+  if (cachedDevice && !deviceLost) return cachedDevice;
+
+  const gpu = await WebSR.initWebGPU();
+  if (!gpu) {
+    throw new Error("WebGPU not available — use Chrome or Edge for AI upscaling");
   }
-  return WebSR;
-}
 
-export type NetworkSize = "s" | "m" | "l";
-
-const NETWORKS: Record<
-  NetworkSize,
-  { name: string; weightsPath: string }
-> = {
-  s: {
-    name: "anime4k/cnn-2x-s",
-    weightsPath: "weights/anime4k/cnn-2x-s-an.json",
-  },
-  m: {
-    name: "anime4k/cnn-2x-m",
-    weightsPath: "weights/anime4k/cnn-2x-m-an.json",
-  },
-  l: {
-    name: "anime4k/cnn-2x-l",
-    weightsPath: "weights/anime4k/cnn-2x-l-an.json",
-  },
-};
-
-const weightsCache = new Map<string, unknown>();
-
-function assetUrl(path: string): string {
-  const base = import.meta.env.BASE_URL || "/";
-  return `${base}${path.replace(/^\//, "")}`;
-}
-
-async function loadWeights(path: string): Promise<unknown> {
-  const key = assetUrl(path);
-  if (weightsCache.has(key)) return weightsCache.get(key);
-  const res = await fetch(key);
-  if (!res.ok) throw new Error(`Failed to load SR weights (${res.status})`);
-  const json = await res.json();
-  weightsCache.set(key, json);
-  return json;
+  cachedDevice = gpu;
+  deviceLost = false;
+  try {
+    gpu.lost.then(() => {
+      deviceLost = true;
+      cachedDevice = null;
+    });
+  } catch {
+    /* older browsers */
+  }
+  return gpu;
 }
 
 export async function isWebSRAvailable(): Promise<boolean> {
   try {
     if (!navigator.gpu) return false;
-    const WebSR = await loadWebSR();
-    const gpu = await WebSR.initWebGPU();
-    if (!gpu) return false;
-    // don't keep device if we're only probing — destroy not always available
-    try {
-      (gpu as GPUDevice).destroy?.();
-    } catch {
-      /* ignore */
-    }
+    await getDevice();
     return true;
   } catch {
     return false;
+  }
+}
+
+/** Wait until GPU work is visible on the canvas, then snapshot to a 2D canvas. */
+async function snapshotWebGPUCanvas(
+  canvas: HTMLCanvasElement,
+  device: GPUDevice,
+): Promise<HTMLCanvasElement> {
+  // Ensure all WebGPU commands have finished presenting
+  try {
+    await device.queue.onSubmittedWorkDone();
+  } catch {
+    // Fallback: give the browser a frame to present
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+  }
+
+  // createImageBitmap is the reliable way to read a WebGPU canvas
+  const bitmap = await createImageBitmap(canvas);
+  const out = document.createElement("canvas");
+  out.width = bitmap.width || canvas.width;
+  out.height = bitmap.height || canvas.height;
+  const ctx = out.getContext("2d", { alpha: false });
+  if (!ctx) {
+    bitmap.close();
+    throw new Error("Could not create 2D canvas for output");
+  }
+  ctx.drawImage(bitmap, 0, 0);
+  bitmap.close();
+
+  // Sanity: reject empty/black frames (broken readback)
+  const sample = ctx.getImageData(
+    Math.floor(out.width / 2),
+    Math.floor(out.height / 2),
+    1,
+    1,
+  ).data;
+  const brightness = (sample[0]! + sample[1]! + sample[2]!) / 3;
+  if (brightness < 2) {
+    // might be a dark image legitimately — check variance in a strip
+    const strip = ctx.getImageData(0, Math.floor(out.height / 2), Math.min(64, out.width), 1).data;
+    let sum = 0;
+    for (let i = 0; i < strip.length; i += 4) {
+      sum += strip[i]! + strip[i + 1]! + strip[i + 2]!;
+    }
+    if (sum < 10) {
+      throw new Error("WebGPU canvas readback empty — AI output not captured");
+    }
+  }
+
+  return out;
+}
+
+async function runNetwork(opts: {
+  network: NetworkName;
+  weights: unknown;
+  source: ImageBitmap;
+  width: number;
+  height: number;
+  device: GPUDevice;
+}): Promise<HTMLCanvasElement> {
+  const { network, weights, source, width, height, device } = opts;
+
+  const scale = network.includes("2x") ? 2 : 1;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(2, width * scale);
+  canvas.height = Math.max(2, height * scale);
+
+  // Attach to DOM (hidden) — helps some browsers present WebGPU correctly
+  canvas.style.cssText =
+    "position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none";
+  document.body.appendChild(canvas);
+
+  try {
+    const websr = new WebSR({
+      network_name: network,
+      weights,
+      gpu: device,
+      canvas,
+      resolution: { width, height },
+    });
+
+    await websr.render(source);
+    const snapped = await snapshotWebGPUCanvas(canvas, device);
+    await websr.destroy();
+    return snapped;
+  } finally {
+    canvas.remove();
   }
 }
 
@@ -95,109 +151,130 @@ export interface WebSREnhanceResult {
   width: number;
   height: number;
   network: string;
+  /** Bilinear 2× of original — use this on the LEFT of the compare slider (free.upscaler style). */
+  bilinearCompare: HTMLCanvasElement;
 }
 
 /**
- * Run Anime4K CNN 2× on an image-like source. Prefer large network.
+ * Full AI path: restore (clean) → 2× CNN upscale (large anime weights).
  */
 export async function enhanceWithWebSR(
   source: CanvasImageSource,
   srcW: number,
   srcH: number,
   onProgress?: ProgressCb,
-  preferred: NetworkSize = "l",
 ): Promise<WebSREnhanceResult> {
-  if (srcW < 2 || srcH < 2) {
-    throw new Error("Image too small to upscale");
-  }
+  if (srcW < 2 || srcH < 2) throw new Error("Image too small");
 
-  // Cap input so we don't OOM on huge sources (tile later)
-  const maxIn = 1920;
-  let drawW = srcW;
-  let drawH = srcH;
-  let drawSource: CanvasImageSource = source;
+  onProgress?.({ phase: "Preparing GPU", progress: 8 });
+  const device = await getDevice();
 
+  // Cap very large inputs for VRAM (tile later)
+  let workW = srcW;
+  let workH = srcH;
+  let bitmap: ImageBitmap;
+
+  const maxIn = 1536;
   if (srcW > maxIn || srcH > maxIn) {
     const r = Math.min(maxIn / srcW, maxIn / srcH);
-    drawW = Math.max(2, Math.round(srcW * r));
-    drawH = Math.max(2, Math.round(srcH * r));
-    const tmp = document.createElement("canvas");
-    tmp.width = drawW;
-    tmp.height = drawH;
-    const ctx = tmp.getContext("2d");
-    if (!ctx) throw new Error("Canvas unavailable");
-    ctx.drawImage(source as CanvasImageSource, 0, 0, drawW, drawH);
-    drawSource = tmp;
+    workW = Math.max(2, Math.round(srcW * r));
+    workH = Math.max(2, Math.round(srcH * r));
+    bitmap = await createImageBitmap(source as ImageBitmapSource, {
+      resizeWidth: workW,
+      resizeHeight: workH,
+      resizeQuality: "high",
+    });
+  } else {
+    bitmap = await createImageBitmap(source as ImageBitmapSource);
+    workW = bitmap.width;
+    workH = bitmap.height;
   }
 
-  onProgress?.({ phase: "Loading AI model (WebGPU)", progress: 10 });
-  const WebSR = await loadWebSR();
-  const gpu = await WebSR.initWebGPU();
-  if (!gpu) {
-    throw new Error("WebGPU not available — need Chrome/Edge for AI engine");
+  // Bilinear 2× for fair compare (what free.upscaler puts on "original" side)
+  const bilinearCompare = document.createElement("canvas");
+  bilinearCompare.width = workW * 2;
+  bilinearCompare.height = workH * 2;
+  {
+    const bctx = bilinearCompare.getContext("2d", { alpha: false });
+    if (!bctx) throw new Error("2D context missing");
+    bctx.imageSmoothingEnabled = true;
+    bctx.imageSmoothingQuality = "high";
+    bctx.drawImage(bitmap, 0, 0, bilinearCompare.width, bilinearCompare.height);
   }
 
-  const order: NetworkSize[] =
-    preferred === "l" ? ["l", "m", "s"] : preferred === "m" ? ["m", "s"] : ["s"];
+  try {
+    // Pass 1: restore at native res (Anime4K CNN restore — cleans mush before upscale)
+    onProgress?.({ phase: "AI restore (Anime4K CNN)", progress: 25 });
+    let current: ImageBitmap = bitmap;
+    let curW = workW;
+    let curH = workH;
 
-  let lastError: unknown;
-  for (const size of order) {
-    const net = NETWORKS[size];
     try {
-      onProgress?.({
-        phase: `Running ${net.name} super-resolution`,
-        progress: 30,
+      const restored = await runNetwork({
+        network: "anime4k/cnn-restore-l",
+        weights: weightsRestoreL,
+        source: current,
+        width: curW,
+        height: curH,
+        device,
       });
-
-      const weights = await loadWeights(net.weightsPath);
-      const canvas = document.createElement("canvas");
-      // Initial size; WebSR resizes to 2× on render
-      canvas.width = drawW * 2;
-      canvas.height = drawH * 2;
-
-      const websr = new WebSR({
-        network_name: net.name,
-        weights,
-        gpu,
-        canvas,
-        resolution: { width: drawW, height: drawH },
-      });
-
-      onProgress?.({ phase: "AI upscaling 2×", progress: 55 });
-      await websr.render(drawSource);
-
-      onProgress?.({ phase: "Finalizing", progress: 90 });
-      const outW = canvas.width;
-      const outH = canvas.height;
-      if (outW < 2 || outH < 2) {
-        await websr.destroy();
-        throw new Error("WebSR produced empty canvas");
-      }
-
-      // Copy off WebSR's canvas before destroy (in case it releases GPU resources)
-      const out = document.createElement("canvas");
-      out.width = outW;
-      out.height = outH;
-      const octx = out.getContext("2d");
-      if (!octx) throw new Error("2D context missing");
-      octx.drawImage(canvas, 0, 0);
-
-      await websr.destroy();
-
-      onProgress?.({ phase: "Done", progress: 100 });
-      return {
-        canvas: out,
-        width: outW,
-        height: outH,
-        network: net.name,
-      };
+      current.close();
+      current = await createImageBitmap(restored);
+      curW = restored.width;
+      curH = restored.height;
     } catch (e) {
-      lastError = e;
-      console.warn(`WebSR network ${net.name} failed`, e);
+      console.warn("Restore pass skipped:", e);
+      // continue with original bitmap
     }
-  }
 
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("All WebSR networks failed");
+    // Pass 2: 2× super-resolution — large anime network (best quality)
+    onProgress?.({ phase: "AI super-resolution 2× (cnn-2x-l)", progress: 55 });
+
+    let upscaled: HTMLCanvasElement | null = null;
+    const attempts: { network: NetworkName; weights: unknown }[] = [
+      { network: "anime4k/cnn-2x-l", weights: weights2xL },
+      { network: "anime4k/cnn-2x-m", weights: weights2xM },
+      { network: "anime4k/cnn-2x-s", weights: weights2xS },
+    ];
+
+    let used = attempts[0]!.network;
+    let lastErr: unknown;
+    for (const a of attempts) {
+      try {
+        upscaled = await runNetwork({
+          network: a.network,
+          weights: a.weights,
+          source: current,
+          width: curW,
+          height: curH,
+          device,
+        });
+        used = a.network;
+        break;
+      } catch (e) {
+        lastErr = e;
+        console.warn(`${a.network} failed`, e);
+      }
+    }
+
+    if (!upscaled) {
+      throw lastErr instanceof Error
+        ? lastErr
+        : new Error("All AI networks failed");
+    }
+
+    onProgress?.({ phase: "Encoding output", progress: 92 });
+    current.close();
+
+    return {
+      canvas: upscaled,
+      width: upscaled.width,
+      height: upscaled.height,
+      network: `restore + ${used}`,
+      bilinearCompare,
+    };
+  } catch (e) {
+    bitmap.close();
+    throw e;
+  }
 }
