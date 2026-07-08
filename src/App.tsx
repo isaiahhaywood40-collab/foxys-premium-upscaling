@@ -187,18 +187,11 @@ export default function App() {
         setPreview(URL.createObjectURL(file));
       }
 
-      const eng =
-        "engine" in enhanced ? (enhanced as { engine: string }).engine : "";
       const net =
         "network" in enhanced
           ? (enhanced as { network?: string }).network
           : undefined;
-      const engineLabel =
-        eng === "esrgan"
-          ? ` · ESRGAN AI (${net || "thick"}) — strong`
-          : eng === "websr"
-            ? ` · WebSR (${net || "Anime4K"})`
-            : " · WebGL fallback (mild)";
+      const engineLabel = ` · REAL AI ${net || "WebSR Anime4K CNN"}`;
 
       setJob((prev) =>
         prev
@@ -332,11 +325,9 @@ export default function App() {
               {result && (
                 <p className="result-meta">
                   {result.width}×{result.height}
-                  {"engine" in result
-                    ? result.engine === "websr"
-                      ? ` · WebSR ${"network" in result && result.network ? result.network : ""}`
-                      : " · WebGL fallback"
-                    : ""}
+                  {"isRealAI" in result && result.isRealAI
+                    ? ` · REAL AI ${"network" in result && result.network ? result.network : "Anime4K CNN"}`
+                    : " · (not AI)"}
                   {"elapsedMs" in result && result.elapsedMs
                     ? ` · ${(result.elapsedMs / 1000).toFixed(1)}s`
                     : ""}
@@ -398,7 +389,8 @@ export default function App() {
 
               {!ready && caps && (
                 <div className="notice warn">
-                  <strong>Browser not ready.</strong> Use Chrome or Edge.{" "}
+                  <strong>Real AI needs WebGPU.</strong> Use desktop Chrome or
+                  Edge (not Safari/Firefox for AI). Check chrome://gpu → WebGPU.{" "}
                   <span className="muted">{caps.details.join(" · ")}</span>
                 </div>
               )}

@@ -11,6 +11,7 @@ export type EnhanceResult = (
       engine?: "websr" | "webgl";
       network?: string;
       elapsedMs?: number;
+      isRealAI?: boolean;
     })
 ) & {
   kind: "image" | "video";

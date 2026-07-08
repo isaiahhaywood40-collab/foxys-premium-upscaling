@@ -1,4 +1,4 @@
-import { canvasToBlob, WebGLEnhancer, type ProgressCb } from "./webgl";
+import { canvasToBlob, type ProgressCb } from "./webgl";
 import { enhanceWithWebSR, isWebSRAvailable } from "./websr-engine";
 
 export interface ImageEnhanceResult {
@@ -9,9 +9,10 @@ export interface ImageEnhanceResult {
   cropAfterUrl: string;
   width: number;
   height: number;
-  engine: "websr" | "webgl";
-  network?: string;
+  engine: "websr";
+  network: string;
   elapsedMs: number;
+  isRealAI: true;
 }
 
 function loadImage(file: File): Promise<HTMLImageElement> {
@@ -34,12 +35,11 @@ async function loadImgFromUrl(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("Could not load result image"));
+    img.onerror = () => reject(new Error("Could not load result"));
     img.src = url;
   });
 }
 
-/** Center crop at native pixels — no resize (shows real sharpness). */
 async function centerCropUrl(
   source: HTMLImageElement | HTMLCanvasElement,
   size = 320,
@@ -58,96 +58,64 @@ async function centerCropUrl(
   if (!ctx) throw new Error("2D missing");
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(source, sx, sy, side, side, 0, 0, side, side);
-  // Always PNG for crops — no JPEG blur
   const blob = await canvasToBlob(c, "image/png");
   return URL.createObjectURL(blob);
 }
 
+/**
+ * REAL AI only (WebSR Anime4K CNN).
+ * No WebGL color-filter fallback — fails with a clear error instead.
+ */
 export async function enhanceImage(
   file: File,
   onProgress?: ProgressCb,
 ): Promise<ImageEnhanceResult> {
   const t0 = performance.now();
-  onProgress?.({ phase: "Reading image", progress: 5 });
+  onProgress?.({ phase: "Reading image", progress: 4 });
   const img = await loadImage(file);
 
-  // Always PNG for AI output — JPEG makes results look blurrier than free.upscaler
-  const encodePng = (canvas: HTMLCanvasElement) => canvasToBlob(canvas, "image/png");
-
-  const finish = async (
-    canvas: HTMLCanvasElement,
-    compareBefore: HTMLCanvasElement,
-    engine: "websr" | "webgl",
-    network?: string,
-  ): Promise<ImageEnhanceResult> => {
-    onProgress?.({ phase: "Saving PNG…", progress: 88 });
-    const blob = await encodePng(canvas);
-    const objectUrl = URL.createObjectURL(blob);
-    const compareBeforeBlob = await canvasToBlob(compareBefore, "image/png");
-    const compareBeforeUrl = URL.createObjectURL(compareBeforeBlob);
-
-    const beforeImg = await loadImgFromUrl(compareBeforeUrl);
-    const afterImg = await loadImgFromUrl(objectUrl);
-    const cropBeforeUrl = await centerCropUrl(beforeImg);
-    const cropAfterUrl = await centerCropUrl(afterImg);
-
-    onProgress?.({ phase: "Done", progress: 100 });
-    return {
-      blob,
-      objectUrl,
-      compareBeforeUrl,
-      cropBeforeUrl,
-      cropAfterUrl,
-      width: canvas.width,
-      height: canvas.height,
-      engine,
-      network,
-      elapsedMs: Math.round(performance.now() - t0),
-    };
-  };
-
-  // ——— WebSR Large Anime4K (sharp, free.upscaler-class) ———
-  try {
-    if (await isWebSRAvailable()) {
-      onProgress?.({ phase: "AI upscale (WebSR Large)…", progress: 12 });
-      const result = await enhanceWithWebSR(
-        img,
-        img.naturalWidth,
-        img.naturalHeight,
-        onProgress,
-      );
-      return await finish(
-        result.canvas,
-        result.bilinearCompare,
-        "websr",
-        result.network,
-      );
-    }
-  } catch (e) {
-    console.error("WebSR failed:", e);
-    onProgress?.({ phase: "AI failed — fast fallback…", progress: 40 });
-  }
-
-  // ——— WebGL fallback (will look softer — Chrome+WebGPU needed for sharp AI) ———
-  onProgress?.({ phase: "WebGL fallback (softer)…", progress: 50 });
-  const engine = new WebGLEnhancer();
-  try {
-    const canvas = engine.enhanceSource(
-      img,
-      img.naturalWidth,
-      img.naturalHeight,
-      { scale: 2, strength: 1.05 },
+  const ok = await isWebSRAvailable();
+  if (!ok) {
+    throw new Error(
+      "Real AI needs Chrome or Edge with WebGPU. Open chrome://gpu and check WebGPU is available.",
     );
-    const bilinear = document.createElement("canvas");
-    bilinear.width = canvas.width;
-    bilinear.height = canvas.height;
-    const bctx = bilinear.getContext("2d", { alpha: false });
-    if (!bctx) throw new Error("2D missing");
-    bctx.imageSmoothingEnabled = true;
-    bctx.imageSmoothingQuality = "high";
-    bctx.drawImage(img, 0, 0, bilinear.width, bilinear.height);
-    return await finish(canvas, bilinear, "webgl");
-  } finally {
-    engine.destroy();
   }
+
+  onProgress?.({ phase: "Running Anime4K CNN (real AI)…", progress: 12 });
+  const result = await enhanceWithWebSR(
+    img,
+    img.naturalWidth,
+    img.naturalHeight,
+    onProgress,
+  );
+
+  if (!result.isRealAI) {
+    throw new Error("Internal error: AI flag missing");
+  }
+
+  onProgress?.({ phase: "Encoding PNG…", progress: 90 });
+  const blob = await canvasToBlob(result.canvas, "image/png");
+  const objectUrl = URL.createObjectURL(blob);
+  const compareBeforeBlob = await canvasToBlob(result.bilinearCompare, "image/png");
+  const compareBeforeUrl = URL.createObjectURL(compareBeforeBlob);
+
+  const beforeImg = await loadImgFromUrl(compareBeforeUrl);
+  const afterImg = await loadImgFromUrl(objectUrl);
+  const cropBeforeUrl = await centerCropUrl(beforeImg);
+  const cropAfterUrl = await centerCropUrl(afterImg);
+
+  onProgress?.({ phase: "Done — real AI", progress: 100 });
+  return {
+    blob,
+    objectUrl,
+    compareBeforeUrl,
+    cropBeforeUrl,
+    cropAfterUrl,
+    width: result.width,
+    height: result.height,
+    engine: "websr",
+    network: result.network,
+    elapsedMs: Math.round(performance.now() - t0),
+    isRealAI: true,
+  };
 }
