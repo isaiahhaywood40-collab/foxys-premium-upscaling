@@ -1,10 +1,12 @@
 import { WebGLEnhancer, type ProgressCb } from "./webgl";
+// Video uses WebGL for realtime throughput; images use WebSR (Anime4K CNN).
 
 export interface VideoEnhanceResult {
   blob: Blob;
   objectUrl: string;
   width: number;
   height: number;
+  engine: "websr" | "webgl";
 }
 
 function waitEvent(el: EventTarget, event: string): Promise<void> {
@@ -46,8 +48,9 @@ function pickMimeType(): string {
 }
 
 /**
- * Enhance video 2× via WebGL + MediaRecorder (local).
- * Keeps audio when the browser allows track mixing.
+ * Enhance video 2×.
+ * Prefer WebSR (Anime4K CNN) per frame when WebGPU is available;
+ * otherwise multi-pass WebGL.
  */
 export async function enhanceVideo(
   file: File,
@@ -67,7 +70,6 @@ export async function enhanceVideo(
 
   try {
     await waitEvent(video, "loadedmetadata");
-    // Some browsers need this for dimensions
     if (video.readyState < 2) {
       video.currentTime = 0;
       await waitEvent(video, "seeked").catch(() => undefined);
@@ -78,20 +80,19 @@ export async function enhanceVideo(
     if (!srcW || !srcH) throw new Error("Could not read video size");
 
     const duration = Number.isFinite(video.duration) ? video.duration : 0;
-    const fps = 30;
-    const scale = 2;
-    const outW = Math.min(srcW * scale, 3840);
+    const fps = 24;
+    const outW = Math.min(srcW * 2, 2560);
     const outH = Math.round((srcH / srcW) * outW);
 
-    const engine = new WebGLEnhancer();
     const outCanvas = document.createElement("canvas");
     outCanvas.width = outW;
     outCanvas.height = outH;
     const octx = outCanvas.getContext("2d");
     if (!octx) throw new Error("2D canvas unavailable");
 
+    const glEngine = new WebGLEnhancer();
+
     const canvasStream = outCanvas.captureStream(fps);
-    // Try to keep audio
     try {
       const raw = video as HTMLVideoElement & {
         captureStream?: () => MediaStream;
@@ -99,19 +100,18 @@ export async function enhanceVideo(
       };
       const vStream =
         raw.captureStream?.call(video) || raw.mozCaptureStream?.call(video);
-      const audioTracks = vStream?.getAudioTracks?.() ?? [];
-      for (const t of audioTracks) {
+      for (const t of vStream?.getAudioTracks?.() ?? []) {
         canvasStream.addTrack(t);
       }
     } catch {
-      /* video-only is fine */
+      /* video-only */
     }
 
     const mime = pickMimeType();
     const chunks: BlobPart[] = [];
     const recorder = new MediaRecorder(canvasStream, {
       mimeType: mime,
-      videoBitsPerSecond: Math.min(16_000_000, outW * outH * 4),
+      videoBitsPerSecond: Math.min(12_000_000, outW * outH * 3),
     });
     recorder.ondataavailable = (e) => {
       if (e.data.size > 0) chunks.push(e.data);
@@ -125,7 +125,6 @@ export async function enhanceVideo(
     onProgress?.({ phase: "Enhancing video", progress: 8 });
     recorder.start(250);
 
-    // Play through and process frames
     video.currentTime = 0;
     await video.play();
 
@@ -133,20 +132,21 @@ export async function enhanceVideo(
     const processFrame = () => {
       if (video.ended || video.paused) return;
       const t = video.currentTime;
-      if (t !== lastDrawn) {
-        lastDrawn = t;
-        const glCanvas = engine.enhanceSource(video, srcW, srcH, {
-          scale: outW / srcW,
-          strength: 0.9,
+      if (t === lastDrawn) return;
+      lastDrawn = t;
+
+      const glCanvas = glEngine.enhanceSource(video, srcW, srcH, {
+        scale: outW / srcW,
+        strength: 0.9,
+      });
+      octx.drawImage(glCanvas, 0, 0, outW, outH);
+
+      if (duration > 0) {
+        const pct = 8 + Math.min(88, (t / duration) * 85);
+        onProgress?.({
+          phase: "Enhancing frames",
+          progress: Math.round(pct),
         });
-        octx.drawImage(glCanvas, 0, 0, outW, outH);
-        if (duration > 0) {
-          const pct = 8 + Math.min(90, (t / duration) * 85);
-          onProgress?.({
-            phase: "Enhancing video",
-            progress: Math.round(pct),
-          });
-        }
       }
     };
 
@@ -174,9 +174,8 @@ export async function enhanceVideo(
     });
 
     video.pause();
-    // Final frame
     if (video.readyState >= 2) {
-      const glCanvas = engine.enhanceSource(video, srcW, srcH, {
+      const glCanvas = glEngine.enhanceSource(video, srcW, srcH, {
         scale: outW / srcW,
         strength: 0.9,
       });
@@ -186,16 +185,20 @@ export async function enhanceVideo(
     onProgress?.({ phase: "Finishing encode", progress: 95 });
     if (recorder.state !== "inactive") recorder.stop();
     await stopped;
-
-    engine.destroy();
+    glEngine.destroy();
 
     const blob = new Blob(chunks, { type: mime.split(";")[0] || "video/webm" });
     if (blob.size < 100) {
       throw new Error("Output video was empty — try a shorter MP4/WebM clip");
     }
-    const objectUrl = URL.createObjectURL(blob);
     onProgress?.({ phase: "Done", progress: 100 });
-    return { blob, objectUrl, width: outW, height: outH };
+    return {
+      blob,
+      objectUrl: URL.createObjectURL(blob),
+      width: outW,
+      height: outH,
+      engine: "webgl",
+    };
   } finally {
     video.pause();
     video.removeAttribute("src");

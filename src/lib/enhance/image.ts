@@ -1,14 +1,13 @@
-import {
-  canvasToBlob,
-  WebGLEnhancer,
-  type ProgressCb,
-} from "./webgl";
+import { canvasToBlob, WebGLEnhancer, type ProgressCb } from "./webgl";
+import { enhanceWithWebSR, isWebSRAvailable } from "./websr-engine";
 
 export interface ImageEnhanceResult {
   blob: Blob;
   objectUrl: string;
   width: number;
   height: number;
+  engine: "websr" | "webgl";
+  network?: string;
 }
 
 function loadImage(file: File): Promise<HTMLImageElement> {
@@ -27,67 +26,83 @@ function loadImage(file: File): Promise<HTMLImageElement> {
   });
 }
 
-/**
- * Pick scale so small images get more resolution boost,
- * large images still get a strong restore (min 2×, up to 4× if tiny).
- */
-function autoScale(w: number, h: number): number {
-  const long = Math.max(w, h);
-  if (long < 640) return 4;
-  if (long < 1280) return 3;
-  if (long < 2048) return 2;
-  return 2;
-}
-
-/** Enhance image → high-quality PNG/JPEG + object URL. */
+/** Prefer WebSR (Anime4K CNN / same stack as free.upscaler). WebGL fallback. */
 export async function enhanceImage(
   file: File,
   onProgress?: ProgressCb,
 ): Promise<ImageEnhanceResult> {
-  onProgress?.({ phase: "Reading image", progress: 5 });
+  onProgress?.({ phase: "Reading image", progress: 4 });
   const img = await loadImage(file);
-  const scale = autoScale(img.naturalWidth, img.naturalHeight);
 
-  onProgress?.({
-    phase: `Upscaling ${scale}× + restoring detail`,
-    progress: 20,
-  });
+  const preferJpeg =
+    file.type === "image/jpeg" || /\.jpe?g$/i.test(file.name);
+  const usePng = !preferJpeg || /\.png$/i.test(file.name);
 
+  // ——— Primary: WebSR neural engine ———
+  try {
+    const available = await isWebSRAvailable();
+    if (available) {
+      const result = await enhanceWithWebSR(
+        img,
+        img.naturalWidth,
+        img.naturalHeight,
+        onProgress,
+        "l",
+      );
+
+      onProgress?.({ phase: "Encoding", progress: 92 });
+      const blob = await canvasToBlob(
+        result.canvas,
+        usePng ? "image/png" : "image/jpeg",
+        usePng ? undefined : 0.95,
+      );
+      return {
+        blob,
+        objectUrl: URL.createObjectURL(blob),
+        width: result.width,
+        height: result.height,
+        engine: "websr",
+        network: result.network,
+      };
+    }
+  } catch (e) {
+    console.warn("WebSR path failed, falling back to WebGL", e);
+    onProgress?.({
+      phase: "AI engine unavailable — using fallback",
+      progress: 20,
+    });
+  }
+
+  // ——— Fallback: multi-pass WebGL ———
+  onProgress?.({ phase: "WebGL enhance", progress: 30 });
   const engine = new WebGLEnhancer();
   try {
-    // Double-pass for stronger visible gain: enhance once, then light restore-scale if small
+    const long = Math.max(img.naturalWidth, img.naturalHeight);
+    const scale = long < 640 ? 4 : long < 1280 ? 3 : 2;
     let canvas = engine.enhanceSource(
       img,
       img.naturalWidth,
       img.naturalHeight,
       { scale, strength: 0.95 },
     );
-
-    onProgress?.({ phase: "Second clarity pass", progress: 65 });
-    // Second pass at 1× with high strength = extra line/CAS punch on already-upscaled result
+    onProgress?.({ phase: "Clarity pass", progress: 70 });
     canvas = engine.enhanceSource(canvas, canvas.width, canvas.height, {
       scale: 1,
       strength: 0.75,
     });
-
-    onProgress?.({ phase: "Encoding", progress: 88 });
-    const preferJpeg =
-      file.type === "image/jpeg" || /\.jpe?g$/i.test(file.name);
-    // Prefer PNG for AI art (cleaner lines)
-    const usePng = !preferJpeg || /\.png$/i.test(file.name);
+    onProgress?.({ phase: "Encoding", progress: 90 });
     const blob = await canvasToBlob(
       canvas,
       usePng ? "image/png" : "image/jpeg",
       usePng ? undefined : 0.95,
     );
-    const objectUrl = URL.createObjectURL(blob);
-
     onProgress?.({ phase: "Done", progress: 100 });
     return {
       blob,
-      objectUrl,
+      objectUrl: URL.createObjectURL(blob),
       width: canvas.width,
       height: canvas.height,
+      engine: "webgl",
     };
   } finally {
     engine.destroy();

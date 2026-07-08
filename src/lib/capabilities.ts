@@ -80,7 +80,8 @@ export async function detectCapabilities(): Promise<BrowserCapabilities> {
 
 /** Images need WebGL; video also needs MediaRecorder. */
 export function canRunLocalUpscale(caps: BrowserCapabilities): boolean {
-  return caps.webgl === "ok";
+  // WebSR needs WebGPU; WebGL fallback still works without it
+  return caps.webgpu === "ok" || caps.webgl === "ok";
 }
 
 export function canEnhanceVideo(caps: BrowserCapabilities): boolean {

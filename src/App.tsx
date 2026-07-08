@@ -186,7 +186,11 @@ export default function App() {
               status: "done",
               progress: 100,
               stageLabel: "Done",
-              message: `Enhanced to ${enhanced.width}×${enhanced.height}`,
+              message: `Enhanced to ${enhanced.width}×${enhanced.height}${
+                "engine" in enhanced && enhanced.engine === "websr"
+                  ? " · AI engine (Anime4K CNN / WebSR)"
+                  : " · WebGL fallback"
+              }`,
             }
           : prev,
       );
@@ -300,7 +304,12 @@ export default function App() {
               {result && (
                 <p className="result-meta">
                   {result.width}×{result.height}
-                  {job?.fileName ? ` · from ${job.fileName}` : ""}
+                  {"engine" in result
+                    ? result.engine === "websr"
+                      ? " · WebSR AI (Anime4K CNN)"
+                      : " · WebGL fallback"
+                    : ""}
+                  {job?.fileName ? ` · ${job.fileName}` : ""}
                 </p>
               )}
             </div>

@@ -9,9 +9,16 @@ export default defineConfig({
   worker: {
     format: "es",
   },
+  optimizeDeps: {
+    include: ["@websr/websr"],
+  },
   build: {
     target: "es2022",
     sourcemap: true,
+    commonjsOptions: {
+      include: [/node_modules/],
+      transformMixedEsModules: true,
+    },
   },
   server: {
     port: 5173,

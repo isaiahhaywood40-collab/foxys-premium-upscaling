@@ -28,7 +28,7 @@ function outName(file: File, kind: "image" | "video"): string {
   return `${base}-foxy-2x.webm`;
 }
 
-/** Single entry: enhance image or video locally. */
+/** Single entry: WebSR (Anime4K CNN) first, WebGL fallback. */
 export async function enhanceMedia(
   file: File,
   onProgress?: ProgressCb,

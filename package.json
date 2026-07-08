@@ -32,6 +32,7 @@
     "lint": "echo \"add eslint when ready\""
   },
   "dependencies": {
+    "@websr/websr": "^0.0.16",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

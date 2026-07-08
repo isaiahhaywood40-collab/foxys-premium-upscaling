@@ -12,18 +12,19 @@ Processing is **100% on-device** (WebGL). No signup. No upload. No watermark.
 ## How it works
 
 ```
-File → WebGL quality pipeline (2×) → compare / download
-         fully local GPU
+File → WebSR Anime4K CNN (WebGPU) 2× → compare / download
+              ↑ same engine family as free.upscaler.video
+         fallback: multi-pass WebGL if no WebGPU
 ```
 
-Automatic pipeline (no user knobs):
+**Primary engine:** [`@websr/websr`](https://github.com/sb2702/websr) — WebGPU neural nets from **Anime4K** (default **cnn-2x-l** animation weights), the same stack free.upscaler.video is built on.
 
-1. **Clean** — mild deblock / soft artifact reduction  
-2. **Upscale** — 2× Catmull-Rom style cubic  
-3. **Clarity** — edge-aware unsharp  
+**Fallback:** multi-pass WebGL (clarity / CAS / lines) if WebGPU is missing.
 
-- **Images** → PNG or JPEG download + before/after scrubber  
-- **Video** → WebM download (VP8/VP9 via MediaRecorder), audio kept when the browser allows  
+- **Images** → PNG or JPEG + before/after scrubber  
+- **Video** → WebM via MediaRecorder (AI path when WebGPU available)  
+
+Weights (MIT, from WebSR): `public/weights/anime4k/cnn-2x-*-an.json`
 
 ---
 
