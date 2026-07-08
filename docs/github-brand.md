@@ -60,3 +60,16 @@ No personal name in either link.
 ## Privacy tip
 
 Keep your personal profile private/minimal. Org **Members** can be hidden (org Settings → Member privileges → base permissions / member visibility).
+
+---
+
+## Status
+
+- [x] Org `foxys-lab` created (free plan)
+- [x] Repo transferred to `foxys-lab/foxys-premium-upscaling`
+- [x] Local `origin` → org remote
+- [x] GitHub Pages enabled (Actions workflow)
+- [x] Public membership unlisted where possible
+
+**Share with friends:** https://github.com/foxys-lab/foxys-premium-upscaling  
+**Live (after first green Pages deploy):** https://foxys-lab.github.io/foxys-premium-upscaling/
