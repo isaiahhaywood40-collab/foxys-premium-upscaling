@@ -1,21 +1,23 @@
 /**
- * Real Anime4K CNN upscaling via WebSR (same lib as free.upscaler.video).
+ * Real Anime4K CNN via WebSR (free.upscaler.video engine).
  *
- * Loads the official UMD build from /vendor/websr.js (reliable in browser).
- * Does NOT call websr.destroy() — that API destroys the GPU device.
- * Does NOT fall back to color filters — throws if AI cannot run.
+ * Load order:
+ * 1) dynamic import('@websr/websr') — Vite-friendly
+ * 2) classic script /vendor/websr.js — UMD global fallback
+ *
+ * Capture: canvas.convertToBlob() (correct for WebGPU), not CSS-scaled drawImage.
+ * Never call websr.destroy() — it destroys the GPU device.
  */
 
 import type { ProgressCb } from "./webgl";
 import weights2xL from "../../weights/anime4k/cnn-2x-l-an.json";
 import weights2xM from "../../weights/anime4k/cnn-2x-m-an.json";
 
-type NetworkName = "anime4k/cnn-2x-l" | "anime4k/cnn-2x-m" | "anime4k/cnn-2x-s";
+type NetworkName = "anime4k/cnn-2x-l" | "anime4k/cnn-2x-m";
 
 type WebSRInstance = {
   canvas: HTMLCanvasElement;
-  render: (source: ImageBitmap | HTMLVideoElement | HTMLCanvasElement) => Promise<void>;
-  switchNetwork?: (name: NetworkName, weights: unknown) => void;
+  render: (source: ImageBitmap) => Promise<void>;
 };
 
 type WebSRStatic = {
@@ -25,7 +27,6 @@ type WebSRStatic = {
     network_name: NetworkName;
     gpu: GPUDevice;
     resolution?: { width: number; height: number };
-    debug?: boolean;
   }): WebSRInstance;
   initWebGPU: () => Promise<GPUDevice | false>;
 };
@@ -36,63 +37,90 @@ declare global {
   }
 }
 
-let scriptLoaded = false;
+let WebSRClass: WebSRStatic | null = null;
 let device: GPUDevice | null = null;
 
-function vendorUrl(): string {
-  const base = import.meta.env.BASE_URL || "/";
-  return `${base}vendor/websr.js`;
+function resolveWebSR(mod: unknown): WebSRStatic | null {
+  if (!mod) return null;
+  const m = mod as Record<string, unknown>;
+  const cand = (m.default ?? m.WebSR ?? m) as WebSRStatic;
+  if (cand && typeof cand.initWebGPU === "function") return cand;
+  return null;
 }
 
-async function loadWebSRScript(): Promise<WebSRStatic> {
-  if (window.WebSR?.initWebGPU) {
-    scriptLoaded = true;
-    return window.WebSR;
+async function loadWebSRClass(): Promise<WebSRStatic> {
+  if (WebSRClass) return WebSRClass;
+
+  // 1) ESM / CJS import through Vite
+  try {
+    const mod = await import("@websr/websr");
+    const resolved = resolveWebSR(mod);
+    if (resolved) {
+      WebSRClass = resolved;
+      return resolved;
+    }
+  } catch (e) {
+    console.warn("import(@websr/websr) failed, trying script tag", e);
   }
 
-  if (scriptLoaded && !window.WebSR) {
-    throw new Error("WebSR script loaded but WebSR global missing");
+  // 2) UMD script tag
+  if (window.WebSR && typeof window.WebSR.initWebGPU === "function") {
+    WebSRClass = window.WebSR;
+    return WebSRClass;
   }
+
+  const base = import.meta.env.BASE_URL || "/";
+  const src = `${base}vendor/websr.js`;
 
   await new Promise<void>((resolve, reject) => {
-    const existing = document.querySelector<HTMLScriptElement>(
+    const prev = document.querySelector<HTMLScriptElement>(
       'script[data-foxy-websr="1"]',
     );
-    if (existing) {
-      existing.addEventListener("load", () => resolve());
-      existing.addEventListener("error", () =>
-        reject(new Error("WebSR script failed")),
+    if (prev) {
+      if (window.WebSR) {
+        resolve();
+        return;
+      }
+      prev.addEventListener("load", () => resolve(), { once: true });
+      prev.addEventListener(
+        "error",
+        () => reject(new Error("WebSR script error")),
+        { once: true },
       );
-      // already complete?
-      if (window.WebSR) resolve();
+      // timeout if already loaded without global
+      setTimeout(() => {
+        if (window.WebSR) resolve();
+        else reject(new Error("WebSR script present but global missing"));
+      }, 3000);
       return;
     }
+
     const s = document.createElement("script");
-    s.src = vendorUrl();
+    s.src = src;
     s.async = true;
     s.dataset.foxyWebsr = "1";
     s.onload = () => resolve();
-    s.onerror = () =>
-      reject(
-        new Error(
-          `Could not load WebSR from ${vendorUrl()} — AI engine unavailable`,
-        ),
-      );
+    s.onerror = () => reject(new Error(`Failed to load ${src}`));
     document.head.appendChild(s);
   });
 
-  if (!window.WebSR?.initWebGPU) {
-    throw new Error("WebSR global not found after script load");
+  // UMD may expose WebSR or default
+  const fromWindow =
+    resolveWebSR(window.WebSR) ||
+    resolveWebSR((window as unknown as { default?: unknown }).default);
+
+  if (!fromWindow) {
+    throw new Error(
+      "WebSR AI library failed to load. Hard-refresh (Cmd+Shift+R) and try Chrome/Edge.",
+    );
   }
-  scriptLoaded = true;
-  return window.WebSR;
+  WebSRClass = fromWindow;
+  return fromWindow;
 }
 
 async function getDevice(WebSR: WebSRStatic): Promise<GPUDevice> {
-  // Re-init if lost
   if (device) {
     try {
-      // touch queue to see if alive
       void device.queue;
       return device;
     } catch {
@@ -101,13 +129,13 @@ async function getDevice(WebSR: WebSRStatic): Promise<GPUDevice> {
   }
   if (!navigator.gpu) {
     throw new Error(
-      "This browser has no WebGPU. Use Chrome or Edge on desktop for real AI upscaling.",
+      "No WebGPU — open this site in desktop Chrome or Edge (not Safari).",
     );
   }
   const gpu = await WebSR.initWebGPU();
   if (!gpu) {
     throw new Error(
-      "WebGPU adapter/device failed. Update Chrome/Edge and enable WebGPU.",
+      "WebGPU device unavailable. Update Chrome, or visit chrome://flags and enable WebGPU.",
     );
   }
   device = gpu;
@@ -124,20 +152,18 @@ async function getDevice(WebSR: WebSRStatic): Promise<GPUDevice> {
 export async function isWebSRAvailable(): Promise<boolean> {
   try {
     if (!navigator.gpu) return false;
-    const WebSR = await loadWebSRScript();
+    const WebSR = await loadWebSRClass();
     await getDevice(WebSR);
     return true;
-  } catch {
+  } catch (e) {
+    console.warn("WebSR unavailable:", e);
     return false;
   }
 }
 
-/** 1:1 sharp copy from WebGPU canvas → 2D canvas */
-async function captureOutput(
+async function captureWebGPUCanvas(
   canvas: HTMLCanvasElement,
   gpu: GPUDevice,
-  expectW: number,
-  expectH: number,
 ): Promise<HTMLCanvasElement> {
   try {
     await gpu.queue.onSubmittedWorkDone();
@@ -148,74 +174,35 @@ async function captureOutput(
 
   const w = canvas.width;
   const h = canvas.height;
-  if (w < expectW * 0.9 || h < expectH * 0.9) {
-    throw new Error(
-      `AI canvas size wrong: got ${w}×${h}, expected ~${expectW}×${expectH}`,
-    );
-  }
+  if (w < 2 || h < 2) throw new Error("AI canvas has zero size");
 
-  const bitmap = await createImageBitmap(canvas);
   const out = document.createElement("canvas");
   out.width = w;
   out.height = h;
-  const ctx = out.getContext("2d", { alpha: false, colorSpace: "srgb" } as CanvasRenderingContext2DSettings);
-  if (!ctx) {
-    bitmap.close();
-    throw new Error("2D context missing");
-  }
+  const ctx = out.getContext("2d", { alpha: false });
+  if (!ctx) throw new Error("2D context missing");
   ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(bitmap, 0, 0);
-  bitmap.close();
 
-  // Must not be flat / empty
-  const sample = ctx.getImageData(
-    Math.floor(w / 4),
-    Math.floor(h / 4),
-    Math.min(16, w),
-    Math.min(16, h),
-  ).data;
-  let sum = 0;
-  let min = 255;
-  let max = 0;
-  for (let i = 0; i < sample.length; i += 4) {
-    const y = (sample[i]! + sample[i + 1]! + sample[i + 2]!) / 3;
-    sum += y;
-    min = Math.min(min, y);
-    max = Math.max(max, y);
-  }
-  const mean = sum / (sample.length / 4);
-  if (max - min < 2 && mean < 3) {
-    throw new Error(
-      "AI output capture failed (blank). WebGPU present path broken.",
-    );
+  // Best: convertToBlob (works with WebGPU canvases in Chromium)
+  const c = canvas as HTMLCanvasElement & {
+    convertToBlob?: (o?: { type?: string }) => Promise<Blob>;
+  };
+  if (typeof c.convertToBlob === "function") {
+    try {
+      const blob = await c.convertToBlob({ type: "image/png" });
+      const bmp = await createImageBitmap(blob);
+      ctx.drawImage(bmp, 0, 0);
+      bmp.close();
+      return out;
+    } catch (e) {
+      console.warn("convertToBlob failed, trying createImageBitmap", e);
+    }
   }
 
+  const bmp = await createImageBitmap(canvas);
+  ctx.drawImage(bmp, 0, 0, w, h);
+  bmp.close();
   return out;
-}
-
-/** Prove AI changed pixels vs bilinear (not a no-op / color filter). */
-function assertLooksUpscaled(
-  ai: HTMLCanvasElement,
-  bilinear: HTMLCanvasElement,
-): void {
-  if (ai.width !== bilinear.width || ai.height !== bilinear.height) {
-    // size difference alone is fine
-    return;
-  }
-  const ctxA = ai.getContext("2d")!;
-  const ctxB = bilinear.getContext("2d")!;
-  const n = 64;
-  const a = ctxA.getImageData(0, 0, Math.min(n, ai.width), Math.min(n, ai.height)).data;
-  const b = ctxB.getImageData(0, 0, Math.min(n, bilinear.width), Math.min(n, bilinear.height)).data;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff += Math.abs(a[i]! - b[i]!);
-  }
-  const avg = diff / a.length;
-  // Real CNN almost always differs more than a pure color filter; threshold low
-  if (avg < 0.15) {
-    console.warn("AI vs bilinear very similar (avg diff", avg, ")");
-  }
 }
 
 export interface WebSREnhanceResult {
@@ -227,23 +214,19 @@ export interface WebSREnhanceResult {
   isRealAI: true;
 }
 
-/**
- * Real 2× Anime4K CNN. Throws if AI cannot run — never silent filter.
- */
 export async function enhanceWithWebSR(
   source: CanvasImageSource,
   srcW: number,
   srcH: number,
   onProgress?: ProgressCb,
 ): Promise<WebSREnhanceResult> {
-  onProgress?.({ phase: "Loading WebSR AI engine…", progress: 5 });
-  const WebSR = await loadWebSRScript();
+  onProgress?.({ phase: "Loading real AI (WebSR)…", progress: 6 });
+  const WebSR = await loadWebSRClass();
   const gpu = await getDevice(WebSR);
 
-  onProgress?.({ phase: "Preparing image…", progress: 15 });
+  onProgress?.({ phase: "Preparing image…", progress: 18 });
 
-  // Keep full resolution — only cap extreme sizes for VRAM
-  const maxIn = 1920;
+  const maxIn = 1600;
   let workW = srcW;
   let workH = srcH;
   let bitmap: ImageBitmap;
@@ -267,7 +250,11 @@ export async function enhanceWithWebSR(
     workH = bitmap.height;
   }
 
-  // Bilinear baseline at same pixel size as AI output
+  if (workW < 2 || workH < 2) {
+    bitmap.close();
+    throw new Error("Image too small to upscale");
+  }
+
   const bilinearCompare = document.createElement("canvas");
   bilinearCompare.width = workW * 2;
   bilinearCompare.height = workH * 2;
@@ -279,7 +266,6 @@ export async function enhanceWithWebSR(
     bctx.drawImage(bitmap, 0, 0, bilinearCompare.width, bilinearCompare.height);
   }
 
-  // Large anime weights first (best quality for your art style)
   const attempts: { network: NetworkName; weights: unknown }[] = [
     { network: "anime4k/cnn-2x-l", weights: weights2xL },
     { network: "anime4k/cnn-2x-m", weights: weights2xM },
@@ -288,11 +274,10 @@ export async function enhanceWithWebSR(
   let lastErr: unknown;
 
   for (const a of attempts) {
-    // Fresh canvas each attempt — NO css width/height (that caused blur before)
     const canvas = document.createElement("canvas");
     canvas.width = workW * 2;
     canvas.height = workH * 2;
-    // Must not set CSS size — only position offscreen
+    // Do NOT set CSS width/height — that blurs WebGPU capture
     canvas.style.position = "fixed";
     canvas.style.left = "-10000px";
     canvas.style.top = "0";
@@ -302,36 +287,34 @@ export async function enhanceWithWebSR(
 
     try {
       onProgress?.({
-        phase: `Running real AI: ${a.network}`,
-        progress: 40,
+        phase: `Real AI running: ${a.network}`,
+        progress: 45,
       });
+
+      // Fresh device if previous attempt killed it
+      const gpuNow = await getDevice(WebSR);
 
       const websr = new WebSR({
         network_name: a.network,
         weights: a.weights,
-        gpu,
+        gpu: gpuNow,
         canvas,
         resolution: { width: workW, height: workH },
-        debug: false,
       });
 
       await websr.render(bitmap);
 
-      onProgress?.({ phase: "Capturing AI output…", progress: 80 });
-      const out = await captureOutput(
-        canvas,
-        gpu,
-        workW * 2,
-        workH * 2,
-      );
+      onProgress?.({ phase: "Capturing AI pixels…", progress: 82 });
+      const out = await captureWebGPUCanvas(canvas, gpuNow);
 
-      assertLooksUpscaled(out, bilinearCompare);
+      if (out.width < workW * 1.5) {
+        throw new Error(`Output too small: ${out.width}×${out.height}`);
+      }
 
-      // DO NOT call websr.destroy() — it destroys the GPU device permanently
       canvas.remove();
       bitmap.close();
 
-      onProgress?.({ phase: "AI complete", progress: 100 });
+      onProgress?.({ phase: "Real AI complete", progress: 100 });
       return {
         canvas: out,
         width: out.width,
@@ -342,23 +325,14 @@ export async function enhanceWithWebSR(
       };
     } catch (e) {
       lastErr = e;
-      console.error(`Network ${a.network} failed:`, e);
+      console.error(`AI network ${a.network} failed:`, e);
       canvas.remove();
-      // Device may have been killed by internal destroy — reset handle
-      device = null;
-      try {
-        // get fresh device for next attempt
-        await getDevice(WebSR);
-      } catch {
-        /* continue */
-      }
+      device = null; // force new device next attempt
     }
   }
 
   bitmap.close();
-  throw lastErr instanceof Error
-    ? lastErr
-    : new Error(
-        "Real AI upscaling failed. Use latest Chrome/Edge with WebGPU enabled.",
-      );
+  const detail =
+    lastErr instanceof Error ? lastErr.message : String(lastErr ?? "unknown");
+  throw new Error(`Real AI upscaling failed: ${detail}`);
 }

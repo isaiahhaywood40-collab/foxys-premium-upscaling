@@ -42,11 +42,22 @@ export async function detectCapabilities(): Promise<BrowserCapabilities> {
     try {
       const adapter = await navigator.gpu.requestAdapter();
       if (adapter) {
-        webgpu = "ok";
-        details.push("WebGPU available (future models)");
+        try {
+          const dev = await adapter.requestDevice();
+          webgpu = "ok";
+          details.push("WebGPU ready for real AI");
+          try {
+            dev.destroy?.();
+          } catch {
+            /* ignore */
+          }
+        } catch {
+          webgpu = "warn";
+          details.push("WebGPU adapter found but device request failed");
+        }
       } else {
         webgpu = "warn";
-        details.push("WebGPU present but no adapter");
+        details.push("WebGPU API present but no adapter");
       }
     } catch (err) {
       webgpu = "warn";
@@ -55,33 +66,21 @@ export async function detectCapabilities(): Promise<BrowserCapabilities> {
       );
     }
   } else {
-    details.push("WebGPU not required — using WebGL pipeline");
+    details.push("No WebGPU — use desktop Chrome or Edge for AI");
   }
 
   const webgl: CapabilityStatus = hasWebGL() ? "ok" : "bad";
-  if (webgl === "ok") {
-    details.push("WebGL ready for 2× enhance");
-  } else {
-    details.push("WebGL missing — enhancement unavailable");
-  }
+  if (webgl === "ok") details.push("WebGL available");
 
   const webcodecs: CapabilityStatus = hasWebCodecs() ? "ok" : "warn";
-  if (webcodecs === "ok") details.push("WebCodecs available");
-
   const mediaRecorder: CapabilityStatus = hasMediaRecorder() ? "ok" : "warn";
-  if (mediaRecorder === "ok") {
-    details.push("MediaRecorder ready for video export");
-  } else {
-    details.push("MediaRecorder missing — video export limited");
-  }
 
   return { webgpu, webcodecs, webgl, mediaRecorder, details };
 }
 
-/** Images need WebGL; video also needs MediaRecorder. */
+/** Allow Upscale click if WebGPU looks usable (ok or warn). */
 export function canRunLocalUpscale(caps: BrowserCapabilities): boolean {
-  // Real AI (WebSR) requires WebGPU — do not pretend WebGL filters are enough
-  return caps.webgpu === "ok";
+  return caps.webgpu === "ok" || caps.webgpu === "warn";
 }
 
 export function canEnhanceVideo(caps: BrowserCapabilities): boolean {

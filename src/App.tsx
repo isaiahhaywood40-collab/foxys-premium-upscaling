@@ -383,14 +383,33 @@ export default function App() {
 
               {error && (
                 <div className="notice warn">
-                  <strong>Could not enhance.</strong> {error}
+                  <strong>AI upscale failed.</strong>
+                  <br />
+                  {error}
+                  <br />
+                  <span className="muted">
+                    Use desktop Chrome/Edge → hard refresh (Cmd+Shift+R) → try a
+                    smaller PNG/JPG. Open chrome://gpu and confirm WebGPU is
+                    available.
+                  </span>
+                  <div className="actions" style={{ marginTop: "0.75rem" }}>
+                    <button
+                      type="button"
+                      className="dropzone-btn"
+                      disabled={busy || !ready}
+                      onClick={start}
+                    >
+                      Retry AI upscale
+                    </button>
+                  </div>
                 </div>
               )}
 
               {!ready && caps && (
                 <div className="notice warn">
-                  <strong>Real AI needs WebGPU.</strong> Use desktop Chrome or
-                  Edge (not Safari/Firefox for AI). Check chrome://gpu → WebGPU.{" "}
+                  <strong>WebGPU not ready for real AI.</strong> Use desktop
+                  Chrome or Edge (Safari/Firefox often lack WebGPU). Visit{" "}
+                  <code>chrome://gpu</code>.{" "}
                   <span className="muted">{caps.details.join(" · ")}</span>
                 </div>
               )}
