@@ -13,7 +13,7 @@ Thanks for helping improve the browser AI upscaler.
 ## Dev setup
 
 ```bash
-git clone https://github.com/isaiahhaywood40-collab/foxys-premium-upscaling.git
+git clone https://github.com/foxys-lab/foxys-premium-upscaling.git
 cd foxys-premium-upscaling
 npm install
 npm run dev

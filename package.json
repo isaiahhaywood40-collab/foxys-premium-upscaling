@@ -7,12 +7,12 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "https://github.com/isaiahhaywood40-collab/foxys-premium-upscaling.git"
+    "url": "https://github.com/foxys-lab/foxys-premium-upscaling.git"
   },
   "bugs": {
-    "url": "https://github.com/isaiahhaywood40-collab/foxys-premium-upscaling/issues"
+    "url": "https://github.com/foxys-lab/foxys-premium-upscaling/issues"
   },
-  "homepage": "https://github.com/isaiahhaywood40-collab/foxys-premium-upscaling#readme",
+  "homepage": "https://github.com/foxys-lab/foxys-premium-upscaling#readme",
   "keywords": [
     "foxys-premium-upscaling",
     "video-upscaler",

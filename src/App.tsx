@@ -282,7 +282,7 @@ export default function App() {
         <span>Foxy&apos;s Premium Upscaling · MIT</span>
         <span>
           <a
-            href="https://github.com/isaiahhaywood40-collab/foxys-premium-upscaling"
+            href="https://github.com/foxys-lab/foxys-premium-upscaling"
             target="_blank"
             rel="noreferrer"
           >
@@ -290,7 +290,7 @@ export default function App() {
           </a>
           {" · "}
           <a
-            href="https://github.com/isaiahhaywood40-collab/foxys-premium-upscaling/blob/main/docs/quality-and-polish.md"
+            href="https://github.com/foxys-lab/foxys-premium-upscaling/blob/main/docs/quality-and-polish.md"
             target="_blank"
             rel="noreferrer"
           >
