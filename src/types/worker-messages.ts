@@ -20,6 +20,7 @@ export type WorkerRequestMessage =
       inputHandle?: FileSystemFileHandle;
       outputHandle?: FileSystemFileHandle;
     }
+  | { cmd: 'exportImage' }
   | { cmd: 'pause' }
   | { cmd: 'resume' };
 

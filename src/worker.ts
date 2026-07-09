@@ -134,7 +134,7 @@ self.onmessage = async function (event: MessageEvent<WorkerRequestMessage>) {
         if (!websr || !upscaled_canvas || !original_canvas || !resolution) {
           postMessage({
             cmd: 'error',
-            data: 'Upscaler not ready. Reload the page and choose a video again.',
+            data: 'Upscaler not ready. Reload the page and choose a file again.',
           } satisfies WorkerResponseMessage);
           break;
         }
@@ -152,6 +152,27 @@ self.onmessage = async function (event: MessageEvent<WorkerRequestMessage>) {
         postMessage({
           cmd: 'error',
           data: err?.message || String(err) || 'Processing failed',
+        } satisfies WorkerResponseMessage);
+      }
+      break;
+
+    case 'exportImage':
+      try {
+        if (!upscaled_canvas) {
+          postMessage({
+            cmd: 'error',
+            data: 'No upscaled image ready. Choose a file again.',
+          } satisfies WorkerResponseMessage);
+          break;
+        }
+        postMessage({ cmd: 'progress', data: 50 });
+        const blob = await upscaled_canvas.convertToBlob({ type: 'image/png' });
+        postMessage({ cmd: 'progress', data: 100 });
+        postMessage({ cmd: 'finished', data: blob } satisfies WorkerResponseMessage);
+      } catch (err: any) {
+        postMessage({
+          cmd: 'error',
+          data: err?.message || String(err) || 'Image export failed',
         } satisfies WorkerResponseMessage);
       }
       break;

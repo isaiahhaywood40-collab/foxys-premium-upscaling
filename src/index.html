@@ -87,18 +87,19 @@
 <div id="file-load-panel"
      class="w-[min(640px,92vw)] mx-auto bg-gray-light rounded-3xl h-[320px] p-6 box-border border border-gray-border block"
      x-show="$store.state === 'init'">
-  <p class="w-full text-2xl text-center my-5 mx-auto text-ink">Choose a video to upscale</p>
-  <!-- Hidden input: reliable file open on Chrome/Edge (no File System Access required) -->
-  <input id="file-input" type="file" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov"
+  <p class="w-full text-2xl text-center my-5 mx-auto text-ink">Choose a video or image</p>
+  <!-- Hidden input: videos + images (previously video-only, which greyed out photos) -->
+  <input id="file-input" type="file"
+         accept="image/*,video/mp4,video/webm,video/quicktime,.png,.jpg,.jpeg,.webp,.gif,.bmp,.mp4,.webm,.mov"
          class="hidden" style="display:none" />
   <button type="button"
           class="btn btn-primary mx-auto my-12 py-3 px-6 rounded-full font-extrabold block"
           id="input-button"
           onclick="chooseFile(this)">
-    Choose a video file
+    Choose a file
   </button>
   <p class="text-center text-muted text-sm">
-    H.264 MP4 recommended · Desktop Chrome or Edge · WebGPU · 100% on-device
+    PNG / JPG / WebP · or H.264 MP4 · Desktop Chrome or Edge · WebGPU
   </p>
 </div>
 
@@ -164,7 +165,8 @@
 
     <button type="button" class="btn btn-primary relative mx-auto w-fit block flex flex-row"
             onclick="initRecording()" x-show="$store.target === 'blob'">
-      Start upscaling &nbsp;
+      <span x-text="$store.mediaKind === 'image' ? 'Download upscaled image' : 'Start upscaling'"></span>
+      &nbsp;
       <img src="play.svg" alt="" width="10" height="10">
     </button>
   </div>
@@ -196,7 +198,7 @@
   </div>
 
   <p x-show="$store.state === 'complete'" class="text-center my-3 text-muted">
-    Done. Download your upscaled video, or process another file.
+    Done. Download your upscaled file, or process another.
   </p>
 
   <div id="download-link" class="flex flex-col" x-show="$store.state === 'complete'">

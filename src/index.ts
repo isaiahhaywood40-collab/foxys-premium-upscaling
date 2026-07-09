@@ -13,10 +13,13 @@ const MAX_FILE_BLOB_SIZE=1900*1024*1024; //Just under 2GB, max ArrayBufferSize
 // Web Worker for video processing
 const worker = new Worker(new URL('./worker.ts', import.meta.url));
 
-// Canvas and video elements
+// Canvas and media elements
 let upscaled_canvas: HTMLCanvasElement;
 let original_canvas: HTMLCanvasElement;
 let video: HTMLVideoElement;
+let imageEl: HTMLImageElement | null = null;
+type MediaKind = 'video' | 'image';
+let mediaKind: MediaKind = 'video';
 
 // Network selection
 type NetworkSize = 'small' | 'medium' | 'large';
@@ -25,12 +28,24 @@ type ContentType = 'rl' | 'an' | '3d';
 let size: NetworkSize = 'medium';
 let content: ContentType = 'rl';
 
-// Video data
+// Input data
 let download_name: string;
 let inputFile: File | null = null;
 let inputFileHandle: FileSystemFileHandle | undefined;
 let gpu: any;
 let websr: WebSR;
+
+function isImageFile(file: File): boolean {
+    if (file.type.startsWith('image/')) return true;
+    return /\.(png|jpe?g|webp|gif|bmp|avif|tiff?)$/i.test(file.name);
+}
+
+async function getSourceBitmap(): Promise<ImageBitmap> {
+    if (mediaKind === 'image' && imageEl) {
+        return createImageBitmap(imageEl);
+    }
+    return createImageBitmap(video);
+}
 
 // AI model weights for different network sizes and content types
 type WeightsMap = {
@@ -94,6 +109,7 @@ document.addEventListener("DOMContentLoaded", index);
 async function index(): Promise<void> {
     Alpine.store('state', 'init');
     Alpine.store('target', 'blob');
+    Alpine.store('mediaKind', 'video');
     Alpine.store('progress', 0);
     Alpine.store('eta', '');
     Alpine.store('error', '');
@@ -111,7 +127,7 @@ async function index(): Promise<void> {
         fileInput.addEventListener('change', async () => {
             const file = fileInput.files?.[0];
             fileInput.value = '';
-            if (file) await loadVideoFromFile(file);
+            if (file) await loadMediaFile(file);
         });
     }
 
@@ -153,18 +169,26 @@ async function chooseFile(_e?: Event): Promise<void> {
         // Fallback: File System Access API
         if (typeof window.showOpenFilePicker === 'function') {
             const [fileHandle] = await window.showOpenFilePicker({
-                types: [{
-                    description: 'Video Files',
-                    accept: {
-                        'video/mp4': ['.mp4'],
-                        'video/webm': ['.webm'],
-                        'video/quicktime': ['.mov'],
+                types: [
+                    {
+                        description: 'Images',
+                        accept: {
+                            'image/*': ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'],
+                        },
                     },
-                }],
+                    {
+                        description: 'Videos',
+                        accept: {
+                            'video/mp4': ['.mp4'],
+                            'video/webm': ['.webm'],
+                            'video/quicktime': ['.mov'],
+                        },
+                    },
+                ],
                 multiple: false,
             });
             const file = await fileHandle.getFile();
-            await loadVideoFromFile(file, fileHandle);
+            await loadMediaFile(file, fileHandle);
             return;
         }
 
@@ -180,26 +204,116 @@ async function chooseFile(_e?: Event): Promise<void> {
 //===================  Preview ===========================
 
 /**
- * Load a video File for preview + processing
+ * Load a video or image File for preview + processing
  */
-async function loadVideoFromFile(file: File, handle?: FileSystemFileHandle): Promise<void> {
+async function loadMediaFile(file: File, handle?: FileSystemFileHandle): Promise<void> {
     try {
         Alpine.store('state', 'loading');
         Alpine.store('error', '');
 
         inputFile = file;
         inputFileHandle = handle;
-
-        download_name = file.name.replace(/\.[^.]+$/, '') + '-upscaled.mp4';
-        Alpine.store('download_name', download_name);
+        mediaKind = isImageFile(file) ? 'image' : 'video';
+        Alpine.store('mediaKind', mediaKind);
         Alpine.store('filename', file.name);
 
-        const arrayBuffer = await file.arrayBuffer();
-        await setupPreview(arrayBuffer);
+        if (mediaKind === 'image') {
+            download_name = file.name.replace(/\.[^.]+$/, '') + '-upscaled.png';
+            Alpine.store('download_name', download_name);
+            await setupImagePreview(file);
+        } else {
+            download_name = file.name.replace(/\.[^.]+$/, '') + '-upscaled.mp4';
+            Alpine.store('download_name', download_name);
+            const arrayBuffer = await file.arrayBuffer();
+            await setupPreview(arrayBuffer);
+        }
     } catch (e: any) {
         console.error(e);
-        showError(e?.message || 'Failed to load video. Try a different MP4.');
+        showError(e?.message || 'Failed to load file. Try a PNG/JPG or H.264 MP4.');
     }
+}
+
+/** Keep loadVideoFromFile name for any older hooks */
+async function loadVideoFromFile(file: File, handle?: FileSystemFileHandle): Promise<void> {
+    return loadMediaFile(file, handle);
+}
+
+/**
+ * Image path: single-frame WebSR preview (same engine as video frames)
+ */
+async function setupImagePreview(file: File): Promise<void> {
+    imageEl = new Image();
+    imageEl.decoding = 'async';
+    const url = URL.createObjectURL(file);
+
+    await new Promise<void>((resolve, reject) => {
+        imageEl!.onload = () => resolve();
+        imageEl!.onerror = () => reject(new Error('Could not decode this image.'));
+        imageEl!.src = url;
+    });
+
+    const width = imageEl.naturalWidth;
+    const height = imageEl.naturalHeight;
+    if (!width || !height) {
+        throw new Error('Image has zero size.');
+    }
+
+    Alpine.store('width', width);
+    Alpine.store('height', height);
+    Alpine.store('size', humanFileSize(file.size * 2)); // rough output hint
+    Alpine.store('target', 'blob');
+
+    upscaled_canvas.width = width * 2;
+    upscaled_canvas.height = height * 2;
+    original_canvas.width = width * 2;
+    original_canvas.height = height * 2;
+
+    const imageCompare = document.getElementById('image-compare-outer') as HTMLElement;
+    imageCompare.style.height = '318px';
+    imageCompare.style.width = `${Math.round((width / height) * 318)}px`;
+    imageCompare.style.margin = 'auto';
+    imageCompare.style.position = 'relative';
+
+    new ImageCompare(document.getElementById('image-compare')).mount();
+
+    window.initRecording = initRecording;
+    window.fullScreenPreview = async () => {
+        imageCompare.requestFullscreen?.();
+    };
+    window.switchNetworkSize = async function (el: HTMLInputElement) {
+        if (el.value !== size) {
+            size = el.value as NetworkSize;
+            await updateNetwork();
+        }
+    };
+    window.switchNetworkStyle = async function (el: HTMLInputElement) {
+        if (el.value !== content) {
+            content = el.value as ContentType;
+            await updateNetwork();
+        }
+    };
+    window.togglePause = function () {};
+
+    const bitmap = await createImageBitmap(imageEl);
+    const upscaled = upscaled_canvas.transferControlToOffscreen();
+    const original = original_canvas.transferControlToOffscreen();
+
+    worker.postMessage({
+        cmd: 'init',
+        data: {
+            bitmap,
+            upscaled,
+            original,
+            resolution: { width, height },
+        },
+    } satisfies WorkerRequestMessage, [bitmap, upscaled, original]);
+
+    content = 'rl';
+    await updateNetwork();
+    Alpine.store('style', 'rl');
+    Alpine.store('state', 'preview');
+
+    URL.revokeObjectURL(url);
 }
 
 /**
@@ -485,7 +599,7 @@ worker.onmessage = function (event: MessageEvent<WorkerResponseMessage>) {
  * Switch to a different upscaling network
  */
 async function updateNetwork(): Promise<void> {
-    const bitmap = await createImageBitmap(video);
+    const bitmap = await getSourceBitmap();
 
     worker.postMessage({
         cmd: 'network',
@@ -500,12 +614,21 @@ async function updateNetwork(): Promise<void> {
 //===================  Process ===========================
 
 /**
- * Start the video upscaling process
+ * Start upscaling: export PNG for images, full video pipeline for video
  */
 async function initRecording(): Promise<void> {
     try {
         if (!inputFile && !inputFileHandle) {
-            return showError('No video loaded. Choose a video first.');
+            return showError('No file loaded. Choose a video or image first.');
+        }
+
+        // Image: preview already ran WebSR — export the upscaled canvas as PNG
+        if (mediaKind === 'image') {
+            Alpine.store('state', 'processing');
+            Alpine.store('progress', 10);
+            Alpine.store('eta', 'exporting PNG…');
+            worker.postMessage({ cmd: 'exportImage' } satisfies WorkerRequestMessage);
+            return;
         }
 
         // Show progress UI immediately (not the blank loading spinner)
