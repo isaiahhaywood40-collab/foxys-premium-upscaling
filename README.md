@@ -1,91 +1,54 @@
 # Foxy's Premium Upscaling
 
-**Free · Private · One-click** browser video & image upscaler.
+**Free · Private · Browser AI** video & image upscaler.
 
-Choose a file → **Enhance** → compare → **Download**.  
-Processing is **100% on-device** (WebGL). No signup. No upload. No watermark.
+Real **WebGPU** super-resolution (Anime4K / WebSR) — same proven engine path as free browser upscalers, branded and themed for **Foxy's Lab**.
 
 **Live:** https://foxys-lab.github.io/foxys-premium-upscaling/
 
----
+## Features
 
-## How it works
-
-```
-File
-  → 1) ESRGAN-thick (UpscalerJS / Real-ESRGAN class)  ← strongest
-  → 2) WebSR Anime4K CNN (free.upscaler family)
-  → 3) WebGL filters
-  → compare + download
-```
-
-**Primary engine:** [UpscalerJS](https://upscalerjs.com) + **`@upscalerjs/esrgan-slim` 2×** — real ESRGAN detail, tuned for **speed** (model ~1MB, local under `public/models/`).
-
-**Secondary:** [`@websr/websr`](https://github.com/sb2702/websr) Anime4K CNN.
-
-**Fallback:** multi-pass WebGL.
-
-Speed notes: long edge capped at 640px before 2×; model preloads when you pick a file; first upscale after preload is much faster.
-
-- **Images** → PNG or JPEG + before/after scrubber  
-- **Video** → WebM via MediaRecorder (AI path when WebGPU available)  
-
-Weights (MIT, from WebSR): `public/weights/anime4k/cnn-2x-*-an.json`
-
----
-
-## Use it
-
-1. Open the [live site](https://foxys-lab.github.io/foxys-premium-upscaling/) (Chrome or Edge recommended)  
-2. Choose an image or short video  
-3. Press **Enhance**  
-4. Drag the compare slider (images)  
-5. **Download**
-
----
+- AI upscale in the browser (Chrome / Edge + WebGPU)
+- Small / Medium / Large networks
+- Before / after compare
+- Free, no signup, no watermark
+- 100% on-device processing
 
 ## Develop
 
 ```bash
-git clone https://github.com/foxys-lab/foxys-premium-upscaling.git
-cd foxys-premium-upscaling
 npm install
 npm run dev
 ```
 
+Open http://localhost:8080
+
 ```bash
 npm run build
-npm run preview
 ```
 
-Requires Node 20+.
+## Deploy (GitHub Pages)
 
----
-
-## Browser support
-
-| Feature | Need |
-|---------|------|
-| Enhance images | WebGL |
-| Enhance video | WebGL + MediaRecorder |
-| Best experience | Chrome / Edge desktop |
-
----
-
-## Project layout
-
-```
-src/
-  lib/enhance/   # WebGL engine, image + video paths
-  lib/           # capabilities, jobs
-  ui/            # dropzone, compare, progress
-  App.tsx        # simple one-click UX
+```bash
+GITHUB_PAGES=true npm run build
 ```
 
----
+Then publish `dist/` (Actions workflow included).
+
+## Stack
+
+- Alpine.js UI
+- WebSR (`@websr/websr`) for Anime4K CNN on WebGPU
+- WebCodecs / mediabunny pipeline for video
+- Webpack build
 
 ## License
 
-MIT · © Foxy's Lab
+MIT. See [LICENSE](LICENSE) for full notices (includes original MIT upstream attribution required by the license).
 
-Not affiliated with free.upscaler.video or Topaz Labs.
+## Credits (libraries)
+
+- [WebSR](https://github.com/sb2702/websr) / Anime4K algorithms  
+- Upstream open-source free browser upscaler (MIT) — forked and rebranded as Foxy's Premium Upscaling  
+
+Product name, dark theme, and GitHub home: **foxys-lab**.

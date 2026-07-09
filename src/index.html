@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta
+    content="Foxy's Premium Upscaling — free private AI video & image upscaler in your browser. No signup. WebGPU."
+    name="description">
+  <meta content="Foxy's Premium Upscaling" property="og:title">
+  <meta
+    content="Upscale videos and images with AI in your browser. Free, private, open source."
+    property="og:description">
+  <meta property="og:type" content="website">
+  <meta content="summary_large_image" name="twitter:card">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#070a12">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@200;400;700;800&display=swap" rel="stylesheet">
+  <link rel="icon" href="logo.svg">
+  <title>Foxy's Premium Upscaling — Free AI Video Upscaler</title>
+</head>
+
+<body x-data="{}" style="display: none;" class="font-manrope text-ink">
+
+<div class="w-full text-center mt-10 mb-4" x-show="$store.state === 'init' || $store.state === 'unsupported'">
+  <div class="foxy-brand mx-auto mb-3">
+    <span aria-hidden="true">🦊</span> Foxy's Lab
+  </div>
+</div>
+
+<h1 id="title"
+    x-show="$store.state === 'init' || $store.state === 'unsupported'"
+    class="w-full text-center mb-6 font-extrabold text-5xl md:text-6xl foxy-title">
+  Foxy's Premium Upscaling
+</h1>
+
+<p id="hero-text"
+   x-show="$store.state === 'init' || $store.state === 'unsupported'"
+   class="text-muted text-lg my-4 mx-auto max-w-[700px] px-4 text-center">
+  Upscale videos or images with AI for free, right in your browser — no signups, installation, or config.
+  Fast, private, open source. Powered by WebGPU super-resolution (Anime4K / WebSR).
+</p>
+
+<div x-show="!($store.state === 'init' || $store.state === 'unsupported')">
+  <br><br>
+</div>
+
+<div id="unsupported-panel"
+     class="w-[min(640px,92vw)] mx-auto bg-gray-light rounded-3xl h-fit p-6 box-border border border-gray-border flex justify-center items-center"
+     x-show="$store.state === 'unsupported'">
+  <p class="w-full text-xl text-center my-5 mx-auto text-ink">
+    Your browser does not support
+    <span id="missing-component" x-text="$store.component"
+          class="font-mono bg-gray-200 rounded-lg py-1 px-2 mx-1 text-lg"></span>,
+    a required feature. Use the latest
+    <img alt="Chrome" src="chrome.svg" style="display:inline" width="25" height="25"> Chrome or
+    <img alt="Edge" src="edge.svg" style="display:inline" width="25" height="25"> Edge on a laptop or desktop.
+  </p>
+</div>
+
+<div class="w-[min(640px,92vw)] mx-auto" x-show="$store.state === 'unsupported'">
+  <p class="w-full text-base text-center my-8 mx-auto text-muted">
+    WebGPU is required for real AI upscaling.
+  </p>
+</div>
+
+<div id="loading-panel"
+     class="w-[min(640px,92vw)] mx-auto bg-gray-light rounded-3xl h-[480px] p-6 box-border border border-gray-border flex justify-center items-center"
+     x-show="$store.state === 'loading'">
+  <img src="loading.svg" alt="Loading" class="w-64 h-64 mx-auto block relative">
+</div>
+
+<div id="error-panel"
+     class="w-[min(640px,92vw)] mx-auto bg-gray-light rounded-3xl h-fit min-h-[240px] p-6 box-border border border-gray-border flex justify-center items-center"
+     x-show="$store.state === 'error'">
+  <p class="w-full text-xl text-center my-5 mx-auto text-ink">
+    An error occurred:
+    <span class="font-mono bg-gray-200 rounded-lg py-1 px-2 mx-1" x-text="$store.error"></span>
+  </p>
+</div>
+
+<div id="file-load-panel"
+     class="w-[min(640px,92vw)] mx-auto bg-gray-light rounded-3xl h-[320px] p-6 box-border border border-gray-border block"
+     x-show="$store.state === 'init'">
+  <p class="w-full text-2xl text-center my-5 mx-auto text-ink">Choose a video to upscale</p>
+  <button type="button"
+          class="btn btn-primary mx-auto my-12 py-3 px-6 rounded-full font-extrabold block"
+          id="input-button"
+          onclick="chooseFile(this)">
+    Choose a video file
+  </button>
+  <p class="text-center text-muted text-sm">MP4 / WebM recommended · Chrome or Edge · 100% on-device</p>
+</div>
+
+<div id="start-panel"
+     class="w-[min(640px,92vw)] mx-auto bg-gray-light rounded-3xl h-fit min-h-[640px] p-6 box-border border border-gray-border"
+     x-show="$store.state === 'preview' || $store.state === 'processing' || $store.state === 'complete' || $store.state === 'paused'">
+
+  <div id="image-compare-outer">
+    <div id="image-compare">
+      <canvas id="original"></canvas>
+      <canvas id="upscaled"></canvas>
+    </div>
+  </div>
+
+  <img src="full-screen.svg" alt="Full Screen" width="15" height="15" id="full-screen"
+       onclick="fullScreenPreview()" x-show="$store.state === 'preview'"
+       class="absolute z-10 cursor-pointer">
+
+  <br>
+
+  <div id="preview" x-show="$store.state === 'preview'">
+    <p class="w-full mb-2 text-center text-muted">
+      Upscaling
+      <span x-text="$store.filename" class="font-mono bg-gray-200 rounded-lg py-1 px-2 mx-1 text-ink"></span>
+      to
+      <span class="font-mono bg-gray-200 rounded-lg py-1 px-2 mx-1 text-ink">
+        <span x-text="$store.width*2"></span>x<span x-text="$store.height*2"></span>
+      </span>.
+      Output: ~
+      <span class="font-mono bg-gray-200 rounded-lg py-1 px-2 mx-1 text-ink" x-text="$store.size"></span>
+    </p>
+
+    <div id="settings" class="mt-3 mb-3 w-full h-fit rounded-2xl text-base bg-page border border-gray-border p-4 text-ink">
+      <table class="w-full">
+        <tr class="hidden">
+          <th class="w-1/2">Settings</th>
+          <th></th>
+        </tr>
+        <tr title="Small is faster, Large is higher quality" class="h-15">
+          <td class="w-2/5 text-muted">Upscaling network</td>
+          <td class="float-right py-2">
+            <input type="radio" class="btn-check" name="options" id="option1" value="small"
+                   onclick="switchNetworkSize(this);" autocomplete="off">
+            <label class="btn btn-outline-primary" for="option1">Small</label>
+            &nbsp;
+            <input type="radio" class="btn-check" name="options" id="option2" value="medium"
+                   onclick="switchNetworkSize(this);" autocomplete="off" checked>
+            <label class="btn btn-outline-primary" for="option2">Medium</label>
+            &nbsp;
+            <input type="radio" class="btn-check" name="options" id="option3" value="large"
+                   onclick="switchNetworkSize(this);" autocomplete="off">
+            <label class="btn btn-outline-primary" for="option3">Large</label>
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    <button type="button" class="btn btn-primary relative mx-auto w-fit block flex flex-row"
+            onclick="initRecording()" x-show="$store.target === 'writer'">
+      Choose output location &nbsp;
+      <img src="folder.svg" alt="" width="10" height="10">
+    </button>
+
+    <button type="button" class="btn btn-primary relative mx-auto w-fit block flex flex-row"
+            onclick="initRecording()" x-show="$store.target === 'blob'">
+      Start upscaling &nbsp;
+      <img src="play.svg" alt="" width="10" height="10">
+    </button>
+  </div>
+
+  <div id="info" x-show="$store.state === 'processing' || $store.state === 'paused'">
+    <p class="text-center mx-auto my-2 text-muted">
+      Upscaling
+      <span x-text="$store.filename" class="font-mono bg-gray-200 rounded-lg py-1 px-2 text-ink"></span>.
+      Time left: <span x-text="$store.eta" class="text-ink"></span>
+    </p>
+    <p class="text-center mx-auto my-2 text-yellow-400 font-bold" x-show="$store.state === 'paused'">
+      ⏸ Processing paused
+    </p>
+    <div class="progress" id="progress">
+      <div class="progress-bar progress-bar-striped progress-bar-animated"
+           x-bind:class="{ 'bg-warning': $store.state === 'paused' }"
+           role="progressbar"
+           x-bind:style="{width: $store.progress + '%'}"
+           x-bind:aria-valuenow="$store.progress"
+           aria-valuemin="0"
+           aria-valuemax="100"
+           style="width: 0%"></div>
+    </div>
+    <div class="flex flex-row justify-center mt-4">
+      <button type="button" class="btn btn-outline-primary" onclick="togglePause()"
+              x-text="$store.state === 'paused' ? 'Resume upscaling' : 'Pause upscaling'">
+      </button>
+    </div>
+  </div>
+
+  <p x-show="$store.state === 'complete'" class="text-center my-3 text-muted">
+    Done. Download your upscaled video, or process another file.
+  </p>
+
+  <div id="download-link" class="flex flex-col" x-show="$store.state === 'complete'">
+    <div class="mx-auto my-2 text-muted" x-show="$store.target=='writer'">
+      Saved to
+      <span x-text="$store.download_name" class="font-mono bg-gray-200 rounded-lg py-1 px-2 mx-1 text-ink"></span>
+    </div>
+    <div class="flex flex-row">
+      <button type="button" class="btn btn-outline-primary flex flex-row mx-auto" onclick="location.reload();">
+        Upscale another
+        <img src="refresh.svg" alt="" width="20" height="20">
+      </button>
+      <a x-bind:href="$store.download_url" x-bind:download="$store.download_name"
+         x-show="$store.target=='blob'" class="mx-auto">
+        <button type="button" class="btn btn-primary flex flex-row" id="download">
+          Download
+          <img src="download-icon.svg" width="20" height="20" alt="">
+        </button>
+      </a>
+    </div>
+  </div>
+</div>
+
+<div id="footer" class="fixed left-0 bottom-0 w-full text-gray-text text-center text-sm p-5 bg-page/80 backdrop-blur">
+  <div class="float-left">
+    Source
+    <a class="text-primary" href="https://github.com/foxys-lab/foxys-premium-upscaling">on GitHub</a>
+    · Foxy's Lab · MIT
+  </div>
+  <div class="float-right">
+    Issues &amp; feedback
+    <a class="text-primary" href="https://github.com/foxys-lab/foxys-premium-upscaling/issues">here</a>
+  </div>
+</div>
+
+</body>
+</html>
