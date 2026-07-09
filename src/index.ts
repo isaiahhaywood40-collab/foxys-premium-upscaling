@@ -27,7 +27,8 @@ let content: ContentType = 'rl';
 
 // Video data
 let download_name: string;
-let inputFileHandle: FileSystemFileHandle;
+let inputFile: File | null = null;
+let inputFileHandle: FileSystemFileHandle | undefined;
 let gpu: any;
 let websr: WebSR;
 
@@ -92,6 +93,11 @@ document.addEventListener("DOMContentLoaded", index);
  */
 async function index(): Promise<void> {
     Alpine.store('state', 'init');
+    Alpine.store('target', 'blob');
+    Alpine.store('progress', 0);
+    Alpine.store('eta', '');
+    Alpine.store('error', '');
+    Alpine.store('component', '');
 
     Alpine.start();
     document.body.style.display = "block";
@@ -99,10 +105,26 @@ async function index(): Promise<void> {
     upscaled_canvas = document.getElementById("upscaled") as HTMLCanvasElement;
     original_canvas = document.getElementById('original') as HTMLCanvasElement;
 
-    if (!("VideoEncoder" in window)) return showUnsupported("WebCodecs");
+    // Wire hidden file input (works on all Chromium builds; no File System Access needed)
+    const fileInput = document.getElementById('file-input') as HTMLInputElement | null;
+    if (fileInput) {
+        fileInput.addEventListener('change', async () => {
+            const file = fileInput.files?.[0];
+            fileInput.value = '';
+            if (file) await loadVideoFromFile(file);
+        });
+    }
 
-    if (!window.showSaveFilePicker) return showUnsupported("File Write System API");
+    worker.onerror = (err) => {
+        console.error('Worker error', err);
+        showError(err.message || 'Background worker failed to load. Hard-refresh the page.');
+    };
 
+    if (!("VideoEncoder" in window) || !("VideoDecoder" in window)) {
+        return showUnsupported("WebCodecs (use latest Chrome or Edge)");
+    }
+
+    // WebGPU checked in worker — don't block on File System Access API (blob download works)
     worker.postMessage({ cmd: 'isSupported' } satisfies WorkerRequestMessage);
 
     window.chooseFile = chooseFile;
@@ -117,47 +139,67 @@ function showUnsupported(text: string): void {
 }
 
 /**
- * Prompt user to choose a video file using File System Access API
+ * Open the system file picker. Prefer a plain <input type="file"> so it always
+ * works in Chrome/Edge without special permissions.
  */
-async function chooseFile(e?: Event): Promise<void> {
+async function chooseFile(_e?: Event): Promise<void> {
     try {
-        const [fileHandle] = await window.showOpenFilePicker({
-            types: [{
-                description: 'Video Files',
-                accept: { 'video/mp4': ['.mp4'] }
-            }],
-            multiple: false
-        });
+        const fileInput = document.getElementById('file-input') as HTMLInputElement | null;
+        if (fileInput) {
+            fileInput.click();
+            return;
+        }
 
-        await loadVideo(fileHandle);
-    } catch (e) {
-        // User cancelled file picker
-        console.log('File selection cancelled');
+        // Fallback: File System Access API
+        if (typeof window.showOpenFilePicker === 'function') {
+            const [fileHandle] = await window.showOpenFilePicker({
+                types: [{
+                    description: 'Video Files',
+                    accept: {
+                        'video/mp4': ['.mp4'],
+                        'video/webm': ['.webm'],
+                        'video/quicktime': ['.mov'],
+                    },
+                }],
+                multiple: false,
+            });
+            const file = await fileHandle.getFile();
+            await loadVideoFromFile(file, fileHandle);
+            return;
+        }
+
+        showError('This browser cannot open local files. Use Chrome or Edge on desktop.');
+    } catch (e: any) {
+        // User cancelled, or real error
+        if (e?.name === 'AbortError') return;
+        console.error(e);
+        showError(e?.message || 'Could not open file picker');
     }
 }
 
 //===================  Preview ===========================
 
 /**
- * Load video file from FileSystemFileHandle
+ * Load a video File for preview + processing
  */
-async function loadVideo(fileHandle: FileSystemFileHandle): Promise<void> {
-    Alpine.store('state', 'loading');
+async function loadVideoFromFile(file: File, handle?: FileSystemFileHandle): Promise<void> {
+    try {
+        Alpine.store('state', 'loading');
+        Alpine.store('error', '');
 
-    // Store the file handle for later processing
-    inputFileHandle = fileHandle;
+        inputFile = file;
+        inputFileHandle = handle;
 
-    // Get the file to create a preview
-    const file = await fileHandle.getFile();
+        download_name = file.name.replace(/\.[^.]+$/, '') + '-upscaled.mp4';
+        Alpine.store('download_name', download_name);
+        Alpine.store('filename', file.name);
 
-    // Set up download name
-    download_name = file.name.split(".")[0] + "-upscaled.mp4";
-    Alpine.store('download_name', download_name);
-    Alpine.store('filename', file.name);
-
-    // Read file for preview setup
-    const arrayBuffer = await file.arrayBuffer();
-    await setupPreview(arrayBuffer);
+        const arrayBuffer = await file.arrayBuffer();
+        await setupPreview(arrayBuffer);
+    } catch (e: any) {
+        console.error(e);
+        showError(e?.message || 'Failed to load video. Try a different MP4.');
+    }
 }
 
 /**
@@ -165,19 +207,23 @@ async function loadVideo(fileHandle: FileSystemFileHandle): Promise<void> {
  */
 async function setupPreview(data: ArrayBuffer): Promise<void> {
     video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'auto';
 
-    const fileBlob = new Blob([data], { type: "video/mp4" });
+    // Sniff type from loaded file when possible
+    const mime = inputFile?.type || 'video/mp4';
+    const fileBlob = new Blob([data], { type: mime });
 
     video.src = URL.createObjectURL(fileBlob);
 
     const imageCompare = document.getElementById('image-compare-outer') as HTMLElement;
 
-
+    video.onerror = () => {
+        showError('Could not decode this video in the browser. Try an H.264 MP4.');
+    };
 
     video.onloadeddata = async function (){
-
-
-
         Alpine.store('width', video.videoWidth);
         Alpine.store('height', video.videoHeight);
         upscaled_canvas.width = video.videoWidth*2;
@@ -212,7 +258,7 @@ async function setupPreview(data: ArrayBuffer): Promise<void> {
 
 
     async function showPreview(){
-
+        try {
         const fullScreenButton = document.getElementById('full-screen');
 
 
@@ -389,8 +435,10 @@ async function setupPreview(data: ArrayBuffer): Promise<void> {
             }
         }
 
-
-
+        } catch (e: any) {
+            console.error(e);
+            showError(e?.message || 'Failed to build preview. Your GPU/WebGPU may be blocked.');
+        }
     }
 
 }
@@ -455,28 +503,47 @@ async function updateNetwork(): Promise<void> {
  * Start the video upscaling process
  */
 async function initRecording(): Promise<void> {
-    Alpine.store('state', 'loading');
-
-    let bitrate = getBitrate();
-    const estimated_size = (bitrate / 8) * video.duration + (128 / 8) * video.duration; // Assume 128 kbps audio
-
-    let outputHandle: FileSystemFileHandle | undefined;
-
-    // Max Blob size - 10 MB (for testing, should be much higher in production)
-    if (estimated_size > MAX_FILE_BLOB_SIZE) {
-        try {
-            outputHandle = await showFilePicker();
-        } catch (e) {
-            console.warn("User aborted request");
-            return Alpine.store('state', 'preview');
+    try {
+        if (!inputFile && !inputFileHandle) {
+            return showError('No video loaded. Choose a video first.');
         }
-    }
 
-    worker.postMessage({
-        cmd: "process",
-        inputHandle: inputFileHandle,
-        outputHandle
-    } satisfies WorkerRequestMessage);
+        Alpine.store('state', 'loading');
+        Alpine.store('progress', 0);
+        Alpine.store('eta', 'starting…');
+
+        const bitrate = getBitrate();
+        const estimated_size = (bitrate / 8) * video.duration + (128 / 8) * video.duration;
+
+        let outputHandle: FileSystemFileHandle | undefined;
+
+        // Huge files need File System Access write; smaller ones download as a blob
+        if (estimated_size > MAX_FILE_BLOB_SIZE) {
+            if (typeof window.showSaveFilePicker !== 'function') {
+                return showError(
+                    'This video is too large for in-browser download. Use Chrome/Edge desktop, or try a shorter clip.'
+                );
+            }
+            try {
+                outputHandle = await showFilePicker();
+            } catch (e) {
+                console.warn('User aborted save location');
+                Alpine.store('state', 'preview');
+                return;
+            }
+        }
+
+        // Prefer File (cloneable); handle optional for huge-file path
+        worker.postMessage({
+            cmd: 'process',
+            file: inputFile || undefined,
+            inputHandle: inputFileHandle,
+            outputHandle,
+        } satisfies WorkerRequestMessage);
+    } catch (e: any) {
+        console.error(e);
+        showError(e?.message || 'Failed to start upscaling');
+    }
 }
 
 /**

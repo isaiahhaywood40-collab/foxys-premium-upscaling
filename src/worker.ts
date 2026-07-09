@@ -95,11 +95,22 @@ self.onmessage = async function (event: MessageEvent<WorkerRequestMessage>) {
 
   switch (event.data.cmd) {
     case 'init':
-      await init(event.data.data);
+      try {
+        await init(event.data.data);
+      } catch (err: any) {
+        postMessage({
+          cmd: 'error',
+          data: err?.message || String(err) || 'WebGPU preview failed',
+        } satisfies WorkerResponseMessage);
+      }
       break;
 
     case 'isSupported':
-      await isSupported();
+      try {
+        await isSupported();
+      } catch {
+        postMessage({ cmd: 'isSupported', data: false } satisfies WorkerResponseMessage);
+      }
       break;
 
     case 'pause':
@@ -119,28 +130,52 @@ self.onmessage = async function (event: MessageEvent<WorkerRequestMessage>) {
       break;
     
     case 'process':
-
-
-      await pipelineProcessor({
-        inputHandle: event.data.inputHandle,
-        outputHandle: event.data.outputHandle,
-        websr,
-        upscaled_canvas,
-        original_canvas,
-        resolution,
-        getPauseLock: () => pauseLock
-      });
-
-     // To use MediaBunny instead, uncomment above import and use:
- //    await mediabunnyProcessor({ inputHandle: event.data.inputHandle, outputHandle: event.data.outputHandle, websr, upscaled_canvas, original_canvas, resolution, getPauseLock: () => pauseLock });
+      try {
+        if (!websr || !upscaled_canvas || !original_canvas || !resolution) {
+          postMessage({
+            cmd: 'error',
+            data: 'Upscaler not ready. Reload the page and choose a video again.',
+          } satisfies WorkerResponseMessage);
+          break;
+        }
+        await pipelineProcessor({
+          file: event.data.file,
+          inputHandle: event.data.inputHandle,
+          outputHandle: event.data.outputHandle,
+          websr,
+          upscaled_canvas,
+          original_canvas,
+          resolution,
+          getPauseLock: () => pauseLock,
+        });
+      } catch (err: any) {
+        postMessage({
+          cmd: 'error',
+          data: err?.message || String(err) || 'Processing failed',
+        } satisfies WorkerResponseMessage);
+      }
       break;
 
     case 'network':
-      await switchNetwork(
-        event.data.data.name,
-        event.data.data.weights,
-        event.data.data.bitmap
-      );
+      try {
+        await switchNetwork(
+          event.data.data.name,
+          event.data.data.weights,
+          event.data.data.bitmap
+        );
+      } catch (err: any) {
+        postMessage({
+          cmd: 'error',
+          data: err?.message || String(err) || 'Network switch failed',
+        } satisfies WorkerResponseMessage);
+      }
       break;
   }
+};
+
+self.onerror = (event) => {
+  postMessage({
+    cmd: 'error',
+    data: typeof event === 'string' ? event : (event as ErrorEvent).message || 'Worker error',
+  } satisfies WorkerResponseMessage);
 };

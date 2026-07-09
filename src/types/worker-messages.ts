@@ -13,7 +13,13 @@ export type WorkerRequestMessage =
   | { cmd: 'isSupported' }
   | { cmd: 'init'; data: InitData }
   | { cmd: 'network'; data: NetworkData }
-  | { cmd: 'process'; inputHandle: FileSystemFileHandle; outputHandle?: FileSystemFileHandle }
+  | {
+      cmd: 'process';
+      /** Preferred: cloneable File from <input type="file"> */
+      file?: File;
+      inputHandle?: FileSystemFileHandle;
+      outputHandle?: FileSystemFileHandle;
+    }
   | { cmd: 'pause' }
   | { cmd: 'resume' };
 

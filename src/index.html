@@ -49,18 +49,19 @@
      class="w-[min(640px,92vw)] mx-auto bg-gray-light rounded-3xl h-fit p-6 box-border border border-gray-border flex justify-center items-center"
      x-show="$store.state === 'unsupported'">
   <p class="w-full text-xl text-center my-5 mx-auto text-ink">
-    Your browser does not support
+    Your browser is missing
     <span id="missing-component" x-text="$store.component"
-          class="font-mono bg-gray-200 rounded-lg py-1 px-2 mx-1 text-lg"></span>,
-    a required feature. Use the latest
+          class="font-mono bg-gray-200 rounded-lg py-1 px-2 mx-1 text-lg"></span>.
+    Open this site in the latest desktop
     <img alt="Chrome" src="chrome.svg" style="display:inline" width="25" height="25"> Chrome or
-    <img alt="Edge" src="edge.svg" style="display:inline" width="25" height="25"> Edge on a laptop or desktop.
+    <img alt="Edge" src="edge.svg" style="display:inline" width="25" height="25"> Edge
+    (Safari / Firefox / phones are not supported yet).
   </p>
 </div>
 
 <div class="w-[min(640px,92vw)] mx-auto" x-show="$store.state === 'unsupported'">
   <p class="w-full text-base text-center my-8 mx-auto text-muted">
-    WebGPU is required for real AI upscaling.
+    Real AI upscaling needs <strong class="text-ink">WebGPU</strong> + <strong class="text-ink">WebCodecs</strong>.
   </p>
 </div>
 
@@ -71,25 +72,34 @@
 </div>
 
 <div id="error-panel"
-     class="w-[min(640px,92vw)] mx-auto bg-gray-light rounded-3xl h-fit min-h-[240px] p-6 box-border border border-gray-border flex justify-center items-center"
+     class="w-[min(640px,92vw)] mx-auto bg-gray-light rounded-3xl h-fit min-h-[240px] p-6 box-border border border-gray-border flex flex-col justify-center items-center gap-4"
      x-show="$store.state === 'error'">
-  <p class="w-full text-xl text-center my-5 mx-auto text-ink">
-    An error occurred:
-    <span class="font-mono bg-gray-200 rounded-lg py-1 px-2 mx-1" x-text="$store.error"></span>
+  <p class="w-full text-xl text-center my-2 mx-auto text-ink">
+    Something went wrong:
+    <span class="font-mono bg-gray-200 rounded-lg py-1 px-2 mx-1 text-base" x-text="$store.error"></span>
   </p>
+  <button type="button" class="btn btn-primary rounded-full px-6 py-2 font-extrabold"
+          onclick="location.reload()">
+    Reload and try again
+  </button>
 </div>
 
 <div id="file-load-panel"
      class="w-[min(640px,92vw)] mx-auto bg-gray-light rounded-3xl h-[320px] p-6 box-border border border-gray-border block"
      x-show="$store.state === 'init'">
   <p class="w-full text-2xl text-center my-5 mx-auto text-ink">Choose a video to upscale</p>
+  <!-- Hidden input: reliable file open on Chrome/Edge (no File System Access required) -->
+  <input id="file-input" type="file" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov"
+         class="hidden" style="display:none" />
   <button type="button"
           class="btn btn-primary mx-auto my-12 py-3 px-6 rounded-full font-extrabold block"
           id="input-button"
           onclick="chooseFile(this)">
     Choose a video file
   </button>
-  <p class="text-center text-muted text-sm">MP4 / WebM recommended · Chrome or Edge · 100% on-device</p>
+  <p class="text-center text-muted text-sm">
+    H.264 MP4 recommended · Desktop Chrome or Edge · WebGPU · 100% on-device
+  </p>
 </div>
 
 <div id="start-panel"

@@ -11,7 +11,8 @@ import WebSR from '@websr/websr';
 import InMemoryStorage from './in-memory-storage';
 
 interface ProcessorArgs {
-  inputHandle: FileSystemFileHandle;
+  file?: File;
+  inputHandle?: FileSystemFileHandle;
   outputHandle?: FileSystemFileHandle;
   websr: WebSR;
   upscaled_canvas: OffscreenCanvas;
@@ -315,16 +316,20 @@ function prettyTime(secs: number): string {
  * Main pipeline processor using Streams API
  */
 export default async function pipelineProcessor(args: ProcessorArgs): Promise<void> {
-  const { inputHandle, outputHandle, websr, upscaled_canvas, original_canvas, resolution, getPauseLock } = args;
+  const { file: inputFile, inputHandle, outputHandle, websr, upscaled_canvas, original_canvas, resolution, getPauseLock } = args;
 
   console.log('Starting pipeline processor with Streams API');
 
-  // Get file from handle
-  const file = await inputHandle.getFile();
+  try {
+  // Prefer File (works from <input type="file">); fall back to File System Access handle
+  const file = inputFile ?? (inputHandle ? await inputHandle.getFile() : null);
+  if (!file) {
+    return postMessage({ cmd: 'error', data: 'No input video file provided' });
+  }
 
   // Initialize demuxer
   const demuxer = new WebDemuxer({
-    wasmFilePath: "https://cdn.jsdelivr.net/npm/web-demuxer@latest/dist/wasm-files/web-demuxer.wasm",
+    wasmFilePath: "https://cdn.jsdelivr.net/npm/web-demuxer@4.0.0/dist/wasm-files/web-demuxer.wasm",
   });
 
   await demuxer.load(file);
@@ -429,4 +434,11 @@ export default async function pipelineProcessor(args: ProcessorArgs): Promise<vo
   }
 
   console.log('Pipeline processing complete!');
+  } catch (err: any) {
+    console.error('Pipeline failed:', err);
+    postMessage({
+      cmd: 'error',
+      data: err?.message || String(err) || 'Video processing failed',
+    });
+  }
 }
